@@ -4,6 +4,7 @@ import {
   createColumnHelper,
   createPaginatedRowModel,
   createSortedRowModel,
+  flexRender,
   rowPaginationFeature,
   rowSortingFeature,
   sortFn_alphanumeric,
@@ -81,6 +82,19 @@ export interface DataTableProps<TData extends RowData> {
   className?: string;
 }
 
+/*
+ * Cells and headers render through the standalone `flexRender(def, context)`
+ * rather than v9's newer `<table.FlexRender header={...} />` component form.
+ *
+ * The component form is what the v9 docs recommend, but rendering it here threw
+ * "Invalid hook call ... Cannot read properties of null (reading 'useState')"
+ * and React attributed the error to <DataTable>. `table.FlexRender` is a
+ * property of the object `useTable` returns, so it is a fresh component type on
+ * every render; React tears down and re-creates that subtree each pass, and the
+ * hooks inside it end up running outside a live render. `flexRender` is a plain
+ * function call with a stable identity and no such problem. Both are supported
+ * exports, and this one is verified working.
+ */
 export function DataTable<TData extends RowData>({
   columns,
   data,
@@ -161,7 +175,7 @@ export function DataTable<TData extends RowData>({
                           onClick={header.column.getToggleSortingHandler()}
                           className="-mx-1 inline-flex items-center gap-1 rounded-app px-1 py-0.5 transition-colors hover:text-foreground"
                         >
-                          <table.FlexRender header={header} />
+                          {flexRender(header.column.columnDef.header, header.getContext())}
                           <SortIcon
                             className={cn(
                               "size-3.5 shrink-0",
@@ -171,7 +185,10 @@ export function DataTable<TData extends RowData>({
                           />
                         </button>
                       ) : (
-                        <table.FlexRender header={header} />
+                        flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )
                       )}
                     </th>
                   );
@@ -204,7 +221,7 @@ export function DataTable<TData extends RowData>({
                         key={cell.id}
                         className="border-b border-border px-4 py-3 text-foreground"
                       >
-                        <table.FlexRender cell={cell} />
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
                   </tr>
