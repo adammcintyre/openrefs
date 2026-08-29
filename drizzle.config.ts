@@ -7,5 +7,4 @@ export default defineConfig({
   dialect: "sqlite",
   schema: "./src/db/schema.ts",
   out: "./migrations",
-  casing: "snake_case",
 });
