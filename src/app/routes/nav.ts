@@ -120,7 +120,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Daily positions for tracked keywords by device and location, with movers and SERP features.",
         phase: 3,
-        live: false,
+        live: true,
         icon: TrendingUp,
       },
       {
