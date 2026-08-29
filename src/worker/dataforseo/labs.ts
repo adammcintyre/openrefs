@@ -76,6 +76,8 @@ export const GOOGLE_DOMAIN_INTERSECTION_LIVE =
   "dataforseo_labs/google/domain_intersection/live";
 export const GOOGLE_PAGE_INTERSECTION_LIVE =
   "dataforseo_labs/google/page_intersection/live";
+export const GOOGLE_BULK_TRAFFIC_ESTIMATION_LIVE =
+  "dataforseo_labs/google/bulk_traffic_estimation/live";
 
 /** Documented ceiling on `limit` across the paged Labs endpoints. */
 export const LABS_MAX_LIMIT = 1000;
@@ -92,6 +94,50 @@ export const LABS_MAX_BULK_KEYWORDS = 1000;
  * Depth 2 is the useful default for a UI list; anything higher is a bulk job.
  */
 export const RELATED_KEYWORDS_MAX_DEPTH = 4;
+
+/**
+ * Documented ceiling on `targets` for bulk_traffic_estimation: "you can set up
+ * to 1000 domains, subdomains or webpages".
+ *
+ * Worth batching *to* rather than merely under: the endpoint bills $0.012 per
+ * task plus $0.00012 per returned item, so the flat fee dominates every small
+ * call. 1000 targets cost $0.132; ten calls of 100 cost $0.276 for the same
+ * data.
+ */
+export const BULK_TRAFFIC_ESTIMATION_MAX_TARGETS = 1000;
+
+/** Flat price of one bulk_traffic_estimation call, USD, before the per-item rate. */
+export const BULK_TRAFFIC_ESTIMATION_PRICE_PER_TASK_USD = 0.012;
+
+/** Per returned item (one target), USD. */
+export const BULK_TRAFFIC_ESTIMATION_PRICE_PER_ITEM_USD = 0.00012;
+
+/**
+ * Where those two figures came from, so the next person re-checks rather than
+ * trusts them: https://dataforseo.com/pricing/dataforseo-labs/
+ * dataforseo-google-api — bulk_traffic_estimation is not listed by name and
+ * falls under the "all other endpoints" row ($0.012 / $0.00012). The worked
+ * example on their page ($132 per 1M items) reconciles exactly.
+ *
+ * **Not to be confused with Historical Bulk Traffic Estimation**, a different
+ * endpoint at ten times the price.
+ *
+ * The `"cost": 0.0103` in the endpoint docs' own response sample is stale — it
+ * is stamped version 0.1.20210917 and reflects the old $0.01/$0.0001 rates.
+ */
+export const BULK_TRAFFIC_ESTIMATION_PRICE_SOURCE =
+  "https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api";
+
+/** What estimating `targetCount` targets costs, in one call per 1000. */
+export function estimateTrafficEstimationCostUsd(targetCount: number): number {
+  const calls = Math.ceil(
+    Math.max(0, targetCount) / BULK_TRAFFIC_ESTIMATION_MAX_TARGETS,
+  );
+  const usd =
+    calls * BULK_TRAFFIC_ESTIMATION_PRICE_PER_TASK_USD +
+    Math.max(0, targetCount) * BULK_TRAFFIC_ESTIMATION_PRICE_PER_ITEM_USD;
+  return Math.round(usd * 1_000_000) / 1_000_000;
+}
 
 /**
  * keyword_overview's documented ceilings: 700 keywords per task, each at most
@@ -892,6 +938,148 @@ export function pageIntersectionField(page: number, field: string): string {
   return `intersection_result.${page}.${field}`;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Bulk traffic estimation                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Monthly traffic estimates for up to 1000 targets in one call.
+ *
+ * Verified against https://docs.dataforseo.com/v3/dataforseo_labs/google/
+ * bulk_traffic_estimation/live/ (2026-08-29). Four things about it are not
+ * guessable, and every one of them is a silent wrong answer if assumed:
+ *
+ *  1. **Target formatting is asymmetric.** Verbatim: "domains and subdomains
+ *     should be specified without `https://` and `www.`; pages should be
+ *     specified with absolute URL, including `https://` and `www.`". So the
+ *     scheme is the discriminator, and running a domain normaliser over a page
+ *     URL turns a page query into a domain query that quietly answers a
+ *     different question. `normalizeTrafficTarget` below encodes exactly this.
+ *  2. **Order is not preserved and unknown targets are omitted.** Their own
+ *     example returns the three targets re-sorted by descending `etv`, and
+ *     `items_count` can be smaller than the number of targets sent. Callers
+ *     match on the `target` string; `toTrafficEstimateMap` does it once.
+ *  3. **The metrics block is lean.** Only `{etv, count}` per item type — none
+ *     of the twelve position buckets the other Labs metric blocks carry — and
+ *     an item type that was not requested comes back as `null` rather than
+ *     zeroes. Hence its own schema rather than `labsMetricsBlockSchema`.
+ *  4. **Price is per task PLUS per item** ($0.012 + $0.00012 each), so a
+ *     1000-target call is $0.132 while a 1-target call is $0.01212 — 92× the
+ *     per-target rate. Batch as close to the ceiling as the caller can.
+ */
+const bulkTrafficEstimationParamsSchema = z.object({
+  targets: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(BULK_TRAFFIC_ESTIMATION_MAX_TARGETS),
+  /**
+   * Optional upstream (omitting means "all locations"), but a traffic estimate
+   * with no market is not a number this product has a use for — every caller
+   * asks about one market — so both are passed through rather than defaulted.
+   */
+  locationCode: z.number().int().positive().optional(),
+  languageCode: z.string().trim().min(2).max(8).optional(),
+  itemTypes: z.array(z.enum(LABS_ITEM_TYPES)).min(1).optional(),
+  ignoreSynonyms: z.boolean().optional(),
+  fresh: z.boolean().optional(),
+});
+
+export type BulkTrafficEstimationParams = z.input<
+  typeof bulkTrafficEstimationParamsSchema
+>;
+
+/** `{etv, count}` and nothing else — see note 3 above. */
+const bulkTrafficMetricsSchema = z
+  .object({
+    etv: nullableNumber,
+    count: nullableNumber,
+  })
+  .nullish();
+
+const bulkTrafficItemSchema = z.object({
+  target: nullableString,
+  metrics: z
+    .object({
+      organic: bulkTrafficMetricsSchema,
+      paid: bulkTrafficMetricsSchema,
+      featured_snippet: bulkTrafficMetricsSchema,
+      local_pack: bulkTrafficMetricsSchema,
+    })
+    .nullish(),
+});
+
+/** One item type's estimate. Null throughout when that type was not asked for. */
+export interface TrafficEstimateMetrics {
+  /** Estimated monthly visits — DataForSEO's `etv`. */
+  etv: number | null;
+  /** SERPs of this type the target appears in. */
+  count: number | null;
+}
+
+export interface TrafficEstimate {
+  /** Echoed byte-identical to what was sent. The only safe join key. */
+  target: string | null;
+  organic: TrafficEstimateMetrics;
+  paid: TrafficEstimateMetrics;
+  featuredSnippet: TrafficEstimateMetrics;
+  localPack: TrafficEstimateMetrics;
+  raw: unknown;
+}
+
+export interface BulkTrafficEstimationResult extends WrappedMeta {
+  items: TrafficEstimate[];
+  totalCount: number | null;
+  itemsCount: number | null;
+}
+
+/**
+ * The target as this endpoint wants it, per note 1 above.
+ *
+ * A string carrying a scheme is a **page** and is passed through untouched —
+ * lowercasing it would break case-sensitive paths, and stripping `www.` would
+ * point at a host that may not serve the same page. Anything else is a domain
+ * or subdomain and is flattened to a bare lowercase host.
+ */
+export function normalizeTrafficTarget(target: string): string {
+  const trimmed = target.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  return trimmed
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "")
+    .replace(/\.$/, "");
+}
+
+/**
+ * De-duplicated and sorted, so the same target set asked for in a different
+ * order shares one cache entry.
+ */
+export function normalizeTrafficTargetList(
+  targets: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const normalized = normalizeTrafficTarget(target);
+    if (normalized) seen.add(normalized);
+  }
+  return [...seen].sort();
+}
+
+/**
+ * `target` → estimate, which is the only correct way to read this endpoint:
+ * results come back reordered, and a target their index has never seen is
+ * missing from `items` rather than present with zeroes.
+ */
+export function toTrafficEstimateMap(
+  items: readonly TrafficEstimate[],
+): Map<string, TrafficEstimate> {
+  const map = new Map<string, TrafficEstimate>();
+  for (const item of items) {
+    if (item.target !== null) map.set(item.target, item);
+  }
+  return map;
+}
+
 export interface LabsApi {
   googleKeywordOverviewLive(
     params: KeywordOverviewParams,
@@ -928,6 +1116,15 @@ export interface LabsApi {
   googlePageIntersectionLive(
     params: PageIntersectionParams,
   ): Promise<PageIntersectionResult>;
+  /**
+   * Traffic estimates for up to `BULK_TRAFFIC_ESTIMATION_MAX_TARGETS` domains,
+   * subdomains **or page URLs** in one call. Read the header note above
+   * `bulkTrafficEstimationParamsSchema` before using it: target formatting is
+   * asymmetric and the results come back reordered.
+   */
+  googleBulkTrafficEstimationLive(
+    params: BulkTrafficEstimationParams,
+  ): Promise<BulkTrafficEstimationResult>;
 }
 
 const keywordIdeasResultSchema = labsWrapperSchema(z.unknown());
@@ -1537,6 +1734,76 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         stale: response.stale,
       };
     },
+
+    async googleBulkTrafficEstimationLive(params) {
+      const {
+        targets,
+        locationCode,
+        languageCode,
+        itemTypes,
+        ignoreSynonyms,
+        fresh,
+      } = parseParams(
+        bulkTrafficEstimationParamsSchema,
+        params,
+        `Invalid traffic estimation request (max ${BULK_TRAFFIC_ESTIMATION_MAX_TARGETS} targets).`,
+      );
+
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_BULK_TRAFFIC_ESTIMATION_LIVE,
+        payload: [
+          {
+            // NOT `normalizeTarget` — that one flattens everything to a
+            // hostname, which would silently turn every page target into a
+            // domain query. See note 1 on the params schema.
+            targets: normalizeTrafficTargetList(targets),
+            location_code: locationCode,
+            language_code: languageCode,
+            item_types: itemTypes,
+            ignore_synonyms: ignoreSynonyms,
+          },
+        ],
+        // A traffic estimate is derived from the same ranking database as
+        // ranked_keywords and domain_rank_overview, so it moves on the same
+        // clock and belongs in the same 7-day bucket.
+        ttl: "short",
+        fresh,
+      });
+
+      const wrapper = parseWrapper(
+        response.results[0],
+        GOOGLE_BULK_TRAFFIC_ESTIMATION_LIVE,
+      );
+      return {
+        items: wrapper.items.map(toTrafficEstimate),
+        totalCount: wrapper.total_count,
+        itemsCount: wrapper.items_count,
+        costUsd: response.costUsd,
+        cached: response.cached,
+        stale: response.stale,
+      };
+    },
+  };
+}
+
+function toTrafficEstimateMetrics(
+  raw: { etv: number | null; count: number | null } | null | undefined,
+): TrafficEstimateMetrics {
+  return { etv: raw?.etv ?? null, count: raw?.count ?? null };
+}
+
+function toTrafficEstimate(raw: unknown): TrafficEstimate {
+  const item = bulkTrafficItemSchema.parse(raw);
+  const metrics = item.metrics;
+  return {
+    target: item.target,
+    organic: toTrafficEstimateMetrics(metrics?.organic),
+    paid: toTrafficEstimateMetrics(metrics?.paid),
+    // Null upstream unless the item type was requested — nulls here, not zeroes,
+    // so "not asked for" never renders as "no featured snippets".
+    featuredSnippet: toTrafficEstimateMetrics(metrics?.featured_snippet),
+    localPack: toTrafficEstimateMetrics(metrics?.local_pack),
+    raw,
   };
 }
 

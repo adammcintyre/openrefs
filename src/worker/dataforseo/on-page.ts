@@ -47,6 +47,7 @@ import { nullableNumber, nullableString } from "./schema";
 /* Endpoints                                                                   */
 /* -------------------------------------------------------------------------- */
 
+export const ON_PAGE_CONTENT_PARSING_LIVE = "on_page/content_parsing/live";
 export const ON_PAGE_TASK_POST = "on_page/task_post";
 export const ON_PAGE_SUMMARY = "on_page/summary";
 export const ON_PAGE_PAGES = "on_page/pages";
@@ -150,6 +151,17 @@ export function estimateCrawlCostUsd(
 function round6(usd: number): number {
   return Math.round(usd * 1_000_000) / 1_000_000;
 }
+
+/**
+ * One `content_parsing/live` call, USD — "$0.00015 /per parsed page", the same
+ * rate as a crawled page and as Instant Pages. Their docs say so explicitly:
+ * "The cost is identical to that of Instant Pages".
+ *
+ * We send no `enable_javascript` and no `enable_browser_rendering`, so the
+ * 10× and 34× multipliers documented for the crawl parameters cannot apply —
+ * which is deliberate, because a word count is not worth ten times its price.
+ */
+export const CONTENT_PARSING_PRICE_PER_URL_USD = 0.00015;
 
 /* -------------------------------------------------------------------------- */
 /* Limits                                                                      */
@@ -357,6 +369,198 @@ export interface SectionPull<T> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Content parsing                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `on_page/content_parsing/live` — one page's text, structured.
+ *
+ * Verified against https://docs.dataforseo.com/v3/on_page/content_parsing/
+ * live/ (2026-08-29). Three findings shape everything below, and two of them
+ * contradict what a caller would reasonably assume:
+ *
+ *  1. **ONE URL PER CALL.** `url` is singular and their live-endpoint rule is
+ *     explicit: "each Live API call can contain only one task". There is no
+ *     array form and no batching — N URLs is N POSTs, which is why the wrapper
+ *     exposes a single-URL function and the route fans out.
+ *  2. **It returns NO word count.** There is no `word_count`, no
+ *     `plain_text_word_count`, and no `meta` object anywhere in this response.
+ *     The count has to be derived from the text blocks, which `countWords`
+ *     below does — walking `main_topic`/`secondary_topic` and deliberately
+ *     skipping `header`, `footer` and `comments`, so the number means "how long
+ *     is this article" rather than "how much text is on this page including the
+ *     nav". (`on_page/instant_pages` *does* return
+ *     `meta.content.plain_text_word_count` at the same price — but that is a
+ *     whole-page figure with the boilerplate in it, which is the wrong number
+ *     for a content-length column.)
+ *  3. **A page it could not fetch is not a task error.** `items[].type` comes
+ *     back `"broken"` (their word, documented against `accept_language`), and
+ *     `items[].status_code` is the *page's* HTTP status, not DataForSEO's. So
+ *     both have to be checked before reading `page_content`, and a failure is
+ *     a null word count rather than a thrown request.
+ */
+
+/**
+ * One text block. `text` is the field carrying prose; `urls` carries the
+ * anchors inside it, which we do not consume but which is why a block is an
+ * object rather than a string.
+ */
+const contentBlockSchema = z.object({
+  text: nullableString,
+});
+
+/**
+ * A content section: the shape shared by `header`, `footer` and every entry of
+ * `main_topic` / `secondary_topic`.
+ */
+const contentSectionSchema = z
+  .object({
+    primary_content: z.array(contentBlockSchema).nullish(),
+    secondary_content: z.array(contentBlockSchema).nullish(),
+  })
+  .nullish();
+
+const contentParsingItemSchema = z.object({
+  /** "content_parsing_element" on success, "broken" when access was refused. */
+  type: nullableString,
+  /** The fetched page's own HTTP status — not DataForSEO's task status. */
+  status_code: nullableNumber,
+  page_content: z
+    .object({
+      /**
+       * Both are ARRAYS of sections here, unlike `header`/`footer` which are
+       * single objects. The article body is `main_topic`.
+       */
+      main_topic: z.array(contentSectionSchema).nullish(),
+      secondary_topic: z.array(contentSectionSchema).nullish(),
+      header: contentSectionSchema,
+      footer: contentSectionSchema,
+    })
+    .nullish(),
+});
+
+const contentParsingResultSchema = z.object({
+  items: z
+    .array(z.unknown())
+    .nullish()
+    .transform((v) => v ?? []),
+});
+
+/** What one URL's parse yielded. Every field is null when the fetch failed. */
+export interface ParsedPageContent {
+  /** The URL as asked for, so a caller can align a fan-out by it. */
+  url: string;
+  /**
+   * Words in the article body — `main_topic` plus `secondary_topic`, excluding
+   * nav, footer and comments. Null when the page could not be parsed.
+   */
+  wordCount: number | null;
+  /** The page's own HTTP status, when it answered at all. */
+  statusCode: number | null;
+  /** `items[].type`; "broken" is DataForSEO's marker for a refused fetch. */
+  itemType: string | null;
+  /** USD billed for this one URL. */
+  costUsd: number;
+  cached: boolean;
+  stale?: boolean;
+}
+
+/**
+ * Words in a run of text.
+ *
+ * Whitespace-separated tokens containing at least one letter or digit, so
+ * markdown bullets, stray punctuation and the separators between blocks do not
+ * inflate the count. Deliberately naive about languages that do not delimit
+ * words with spaces — for those the number is an undercount, which is honest
+ * enough for a "how long is this article" column and better than pretending to
+ * segment Japanese.
+ */
+export function countWords(text: string): number {
+  let words = 0;
+  for (const token of text.split(/\s+/)) {
+    if (/[\p{L}\p{N}]/u.test(token)) words += 1;
+  }
+  return words;
+}
+
+/** Every `text` in a section's primary and secondary blocks. */
+function sectionWords(
+  section: z.infer<typeof contentSectionSchema>,
+): number {
+  if (!section) return 0;
+  let words = 0;
+  for (const blocks of [section.primary_content, section.secondary_content]) {
+    for (const block of blocks ?? []) {
+      if (block.text) words += countWords(block.text);
+    }
+  }
+  return words;
+}
+
+/**
+ * The article's word count, or null when this item is not a parsed page.
+ *
+ * Header, footer and comments are excluded on purpose — see note 2 at the top
+ * of this section. A 200-page with genuinely empty `main_topic` counts 0, which
+ * is a real answer ("this page has no body text"), distinct from null.
+ */
+export function toParsedPageContent(
+  url: string,
+  raw: unknown,
+  meta: { costUsd: number; cached: boolean; stale?: boolean },
+): ParsedPageContent {
+  const parsed = contentParsingItemSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      url,
+      wordCount: null,
+      statusCode: null,
+      itemType: null,
+      costUsd: meta.costUsd,
+      cached: meta.cached,
+      stale: meta.stale,
+    };
+  }
+
+  const item = parsed.data;
+  const reachable =
+    item.type === "content_parsing_element" &&
+    item.status_code !== null &&
+    item.status_code >= 200 &&
+    item.status_code < 300;
+
+  if (!reachable || !item.page_content) {
+    return {
+      url,
+      wordCount: null,
+      statusCode: item.status_code,
+      itemType: item.type,
+      costUsd: meta.costUsd,
+      cached: meta.cached,
+      stale: meta.stale,
+    };
+  }
+
+  let words = 0;
+  for (const topic of item.page_content.main_topic ?? []) {
+    words += sectionWords(topic);
+  }
+  for (const topic of item.page_content.secondary_topic ?? []) {
+    words += sectionWords(topic);
+  }
+
+  return {
+    url,
+    wordCount: words,
+    statusCode: item.status_code,
+    itemType: item.type,
+    costUsd: meta.costUsd,
+    cached: meta.cached,
+    stale: meta.stale,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Lighthouse                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -480,6 +684,18 @@ export interface OnPageApi {
     taskId: string,
     options?: { limit?: number; offset?: number },
   ): Promise<SectionPull<unknown>>;
+  /**
+   * Billed per page. **One URL per call** — see note 1 in the content-parsing
+   * section; callers wanting several run several of these concurrently.
+   *
+   * Never throws for a page that could not be fetched: that comes back as a
+   * `ParsedPageContent` with a null `wordCount` and the reason in `itemType` /
+   * `statusCode`, because one dead URL out of ten must not fail the other nine.
+   */
+  contentParsingLive(params: {
+    url: string;
+    fresh?: boolean;
+  }): Promise<ParsedPageContent>;
   /** Billed, flat per task. One homepage run per audit. */
   lighthouseTaskPost(params: {
     url: string;
@@ -692,6 +908,46 @@ export function createOnPageApi(client: DataForSeoClient): OnPageApi {
 
     links(taskId, options) {
       return section(ON_PAGE_LINKS, taskId, options);
+    },
+
+    async contentParsingLive(params) {
+      const response = await client.request<unknown>({
+        endpoint: ON_PAGE_CONTENT_PARSING_LIVE,
+        payload: [
+          {
+            // Singular, and one task per POST — the endpoint has no array form.
+            url: params.url,
+            /*
+             * Set explicitly because their docs name it as the fix for the
+             * `"type": "broken"` failure mode: "if you do not specify this
+             * parameter, some websites may deny access". Free, and it turns a
+             * refusal into a word count.
+             */
+            accept_language: "en-US,en;q=0.9",
+            /*
+             * Both left off, and both are money: enable_javascript is 10× the
+             * per-page price and enable_browser_rendering is 34×. A word count
+             * off the server-rendered HTML is worth its $0.00015 and is not
+             * worth $0.0051.
+             */
+          },
+        ],
+        // A page's body text is about the most stable thing DataForSEO sells —
+        // articles are not rewritten weekly — so this takes the longest bucket.
+        ttl: "long",
+        fresh: params.fresh,
+      });
+
+      const meta = {
+        costUsd: response.costUsd,
+        cached: response.cached,
+        stale: response.stale,
+      };
+      const parsed = contentParsingResultSchema.safeParse(response.results[0]);
+      // No result at all is the same outcome as an unparseable one: null, not
+      // an exception. The caller asked about ten URLs and is owed nine answers.
+      const item = parsed.success ? parsed.data.items[0] : undefined;
+      return toParsedPageContent(params.url, item, meta);
     },
 
     async lighthouseTaskPost(params) {
