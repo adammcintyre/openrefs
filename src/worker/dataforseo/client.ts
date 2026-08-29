@@ -46,6 +46,18 @@ export const DFS_TASK_HANDED_STATUS = 40601;
 export const DFS_TASK_IN_QUEUE_STATUS = 40602;
 
 /**
+ * "Task Not Found." and "Results Expired." — the two `task_get` outcomes that
+ * will never become a result no matter how long a collector waits, so callers
+ * drop them rather than retrying.
+ *
+ * They live here, beside the other task-queue codes, because every family with
+ * a task flow needs them: SERP rank collection and OnPage audits both do, and
+ * defining them twice made `export *` from index.ts ambiguous.
+ */
+export const DFS_TASK_NOT_FOUND_STATUS = 40401;
+export const DFS_RESULTS_EXPIRED_STATUS = 40403;
+
+/**
  * Per-attempt ceilings on one upstream connection. Two distinct failure modes
  * observed in production (2026-08): a hung connection that a fresh attempt
  * beats in under a second (search_volume), and an endpoint that legitimately

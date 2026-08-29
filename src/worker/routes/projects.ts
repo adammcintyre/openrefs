@@ -7,6 +7,7 @@
  *   POST   /api/v1/projects/:id/keywords             bulk add + check now
  *   DELETE /api/v1/projects/:id/keywords             bulk remove
  *   POST   /api/v1/projects/:id/keywords/check-now   re-check           (admin)
+ *   .../:id/audits                                   mounted from audits.ts
  *
  * Projects and tracked keywords are pure D1 — nothing here calls DataForSEO.
  * The two routes that cause spending (`POST /keywords`, `check-now`) do it by
@@ -53,6 +54,7 @@ import {
 } from "../../shared/tracking";
 import { ApiException } from "../http";
 import { enqueueJob, hasQueuedJobForProject } from "../jobs";
+import { projectAuditsRouter } from "./audits";
 import { authorizeWorkspace, normalizeDomain, workspaceParam } from "../lib/research";
 import { readJson, readParams, readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
@@ -61,6 +63,16 @@ import type { AppEnv } from "../types";
 const projectsRouter = new Hono<AppEnv>();
 
 projectsRouter.use("*", requireSession);
+
+/**
+ * Site Audit's project-scoped half — `GET`/`POST /projects/:id/audits`.
+ *
+ * Mounted rather than defined here so every audit route lives in one file, and
+ * mounted *before* the `/:id`-shaped routes below because Hono matches in
+ * registration order: a bare `/:id` pattern registered first would swallow
+ * `/:id/audits`. The sub-router reads the `:id` this pattern captures.
+ */
+projectsRouter.route("/:id/audits", projectAuditsRouter);
 
 const workspaceQuerySchema = z.object({ workspace: workspaceParam });
 const idParamSchema = z.object({ id: z.string().trim().min(1) });

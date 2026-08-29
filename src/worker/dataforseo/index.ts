@@ -18,6 +18,8 @@ import type { LabsApi } from "./labs";
 import { createLabsApi } from "./labs";
 import type { MetaApi } from "./meta";
 import { createMetaApi } from "./meta";
+import type { OnPageApi } from "./on-page";
+import { createOnPageApi } from "./on-page";
 import type { SerpApi } from "./serp";
 import { createSerpApi } from "./serp";
 
@@ -29,6 +31,7 @@ export * from "./keywords-data";
 export * from "./labs";
 export * from "./meta";
 export * from "./metering";
+export * from "./on-page";
 export * from "./schema";
 export * from "./scores";
 export * from "./serp";
@@ -40,6 +43,8 @@ export interface DataForSeoApi {
   labs: LabsApi;
   backlinks: BacklinksApi;
   serp: SerpApi;
+  /** The crawler. Only `task_post` is billed; every retrieval is free. */
+  onPage: OnPageApi;
   /** The zero-cost reference lists. The only globally-cached family. */
   meta: MetaApi;
 }
@@ -54,6 +59,7 @@ export function createDataForSeoApiFromClient(
     labs: createLabsApi(client),
     backlinks: createBacklinksApi(client),
     serp: createSerpApi(client),
+    onPage: createOnPageApi(client),
     meta: createMetaApi(client),
   };
 }
