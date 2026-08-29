@@ -6,9 +6,17 @@
  * sets `fresh=true` and spends. That split is the whole cost model of this
  * panel: browsing results is free after the first look, and the one control
  * that costs money says so before you press it and reports what it cost after.
+ *
+ * **Domain Score (Phase 2 retrofit).** Once the rows are in, their distinct
+ * domains go out as a *single* `POST /backlinks/scores` call and come back as
+ * the last column. One batched call rather than one per row is the whole
+ * design: twenty rows would otherwise be twenty billed lookups for one glance
+ * at a page. The scores call is cached and metered like any other, so it
+ * carries its own chip beside the SERP's; when it fails or has nothing to say,
+ * the column is dashes and the results are unaffected.
  */
 import { RefreshCw, SearchX } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { SerpRow } from "../../shared/keywords";
 import { CostChip, CostHint } from "./keywords/chips";
@@ -18,12 +26,20 @@ import {
 } from "./keywords/api-error-notice";
 import { formatDate, formatSerpFeature, formatVolume } from "./keywords/format";
 import { useRefreshSerp, useSerp } from "./keywords/queries";
+import {
+  distinctScoreTargets,
+  lookupDomainScore,
+  scoresByTarget,
+  useDomainScores,
+} from "./gap/domain-scores";
+import { DomainScoreCell } from "./gap/score-cell";
 import { Badge, Button, Dialog, EmptyState, Skeleton } from "./ui";
 
 /**
- * This file is OWNED by the Keyword Research UI agent. Other modules import it
- * against these frozen props — change the implementation freely, never the
- * props without checking every call site.
+ * This file is OWNED by the Gap Analysis UI agent (transferred from Keyword
+ * Research for the Phase 2 retrofit). Other modules import it against these
+ * frozen props — change the implementation freely, never the props without
+ * checking every call site.
  */
 export interface SerpPanelProps {
   workspaceId: string;
@@ -53,7 +69,15 @@ function safeHttpUrl(url: string | null): string | null {
   }
 }
 
-function SerpResultRow({ row }: { row: SerpRow }) {
+function SerpResultRow({
+  row,
+  score,
+  scoresLoading,
+}: {
+  row: SerpRow;
+  score: number | null;
+  scoresLoading: boolean;
+}) {
   const href = safeHttpUrl(row.url);
   const position = row.position ?? row.positionAbsolute;
 
@@ -88,6 +112,9 @@ function SerpResultRow({ row }: { row: SerpRow }) {
       <td className="px-4 py-3 align-top">
         <span className="text-muted-foreground">{row.domain ?? "—"}</span>
       </td>
+      <td className="px-4 py-3 align-top">
+        <DomainScoreCell score={score} loading={scoresLoading} />
+      </td>
     </tr>
   );
 }
@@ -121,7 +148,22 @@ export function SerpPanel({
 
   const error = query.error ?? refresh.error;
   const loading = query.isPending && open;
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
+
+  /*
+   * One batch for the whole page. Memoised on the rows so a re-render does not
+   * produce a new array identity, which would churn the query key and re-ask
+   * for scores we already hold.
+   */
+  const scoreTargets = useMemo(
+    () => distinctScoreTargets(items.map((row) => row.domain)),
+    [items],
+  );
+  const scoresQuery = useDomainScores(workspaceId, scoreTargets, open);
+  const scores = useMemo(
+    () => scoresByTarget(scoresQuery.data?.items ?? []),
+    [scoresQuery.data],
+  );
 
   return (
     <Dialog
@@ -163,6 +205,18 @@ export function SerpPanel({
           {data?.fetchedAt ? (
             <span className="text-xs text-muted-foreground">
               Fetched {formatDate(data.fetchedAt)}
+            </span>
+          ) : null}
+          {/*
+            The scores lookup is a second billed call, so it gets its own chip
+            rather than being folded invisibly into the SERP's price.
+          */}
+          {scoresQuery.data !== undefined ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">
+                Domain Score
+              </span>
+              <CostChip meta={scoresQuery.data} />
             </span>
           ) : null}
         </div>
@@ -230,6 +284,13 @@ export function SerpPanel({
                   >
                     Domain
                   </th>
+                  <th
+                    scope="col"
+                    className="border-b border-border px-4 py-2.5 text-left font-medium text-muted-foreground"
+                    title="Authority of the ranking domain, 0–100."
+                  >
+                    Domain Score
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -237,6 +298,8 @@ export function SerpPanel({
                   <SerpResultRow
                     key={`${row.url ?? "row"}-${index}`}
                     row={row}
+                    score={lookupDomainScore(scores, row.domain)}
+                    scoresLoading={scoresQuery.isPending}
                   />
                 ))}
               </tbody>
@@ -244,10 +307,15 @@ export function SerpPanel({
           </div>
         ) : null}
 
-        <p className="text-xs text-muted-foreground">
-          A Domain Score column for each result arrives with the Backlinks
-          module.
-        </p>
+        {/*
+          A failed scores lookup is not a failed SERP: the results above are
+          still correct, so this stays a quiet line rather than an error notice.
+        */}
+        {scoresQuery.isError && items.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Domain Score is unavailable for these results right now.
+          </p>
+        ) : null}
       </div>
     </Dialog>
   );
