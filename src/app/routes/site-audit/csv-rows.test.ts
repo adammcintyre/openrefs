@@ -40,6 +40,19 @@ describe("humanizeDetailKey", () => {
     expect(humanizeDetailKey("title")).toBe("Title");
   });
 
+  /**
+   * The live payload uses camelCase: a 25-page audit of brandpacks.com returns
+   * `titleLength`, which without the split renders as the header "TitleLength".
+   */
+  it("splits camelCase, which is what the section data actually sends", () => {
+    expect(humanizeDetailKey("titleLength")).toBe("Title length");
+    expect(humanizeDetailKey("statusCode")).toBe("Status code");
+  });
+
+  it("leaves an acronym capitalised rather than turning URL into Url", () => {
+    expect(humanizeDetailKey("canonical_URL")).toBe("Canonical URL");
+  });
+
   it("leaves an unrecognisable key alone rather than blanking the column", () => {
     expect(humanizeDetailKey("_")).toBe("_");
   });

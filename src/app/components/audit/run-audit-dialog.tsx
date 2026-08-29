@@ -34,6 +34,7 @@ export function RunAuditDialog({
   projectId,
   domain,
   onStarted,
+  onBlocked,
 }: {
   open: boolean;
   onClose: () => void;
@@ -42,6 +43,12 @@ export function RunAuditDialog({
   domain: string;
   /** The new audit's id, so the page can switch to watching it immediately. */
   onStarted: (auditId: string) => void;
+  /**
+   * A rejection the user has to act on elsewhere — no credentials, or the
+   * spend cap. Handed up rather than toasted: both need a link to Settings,
+   * and a toast takes its link away after a few seconds.
+   */
+  onBlocked: (error: unknown) => void;
 }) {
   const { toast } = useToast();
   const createAudit = useCreateAudit(workspaceId, projectId);
@@ -69,8 +76,23 @@ export function RunAuditDialog({
         tone: "success",
       });
     } catch (caught) {
-      const conflict =
-        caught instanceof ApiError && caught.status === 409;
+      const code = caught instanceof ApiError ? caught.code : "unknown";
+
+      /*
+       * Two rejections are conditions rather than failures, and both need a
+       * link the user can still click in a minute's time. They close the
+       * dialog and become a notice on the page behind it.
+       */
+      if (code === "no_credentials" || code === "spend_cap_exceeded") {
+        onClose();
+        onBlocked(caught);
+        return;
+      }
+
+      // A crawl already running is a description of a normal state, not an
+      // error: someone started one in another tab, or the last one is still
+      // going. Said once, quietly, and the dialog gets out of the way.
+      const conflict = caught instanceof ApiError && caught.status === 409;
       toast({
         title: conflict
           ? "An audit is already running"

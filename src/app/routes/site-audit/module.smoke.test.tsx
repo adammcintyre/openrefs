@@ -276,7 +276,8 @@ const ISSUES: AuditIssuesResponse = {
       url: "https://brandpacks.com/templates/photo-booth",
       statusCode: 200,
       checks: ["title_too_long"],
-      details: { title: "A very long title indeed", title_length: 112 },
+      // camelCase, as the live section data actually sends it.
+      details: { title: "A very long title indeed", titleLength: 112 },
     },
     {
       url: "https://brandpacks.com/pricing",

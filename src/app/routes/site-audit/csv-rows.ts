@@ -46,11 +46,32 @@ export function detailKeys(
   return keys;
 }
 
-/** `redirect_target` to `Redirect target`, for the header row. */
+/**
+ * A detail key as a column header: `titleLength` to `Title length`.
+ *
+ * Handles camelCase *and* snake_case because the payload uses both — the
+ * section data comes back with keys like `titleLength` and `statusCode`, while
+ * anything we synthesise reads more naturally as `redirect_target`. A header of
+ * "TitleLength" is the giveaway that only one of the two was considered.
+ *
+ * An all-capitals word is left alone, so a key containing `URL` does not come
+ * back as "Url".
+ */
 export function humanizeDetailKey(key: string): string {
-  const words = key.replace(/[_-]+/g, " ").trim();
-  if (words === "") return key;
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const spaced = key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+  if (spaced === "") return key;
+
+  return spaced
+    .split(/\s+/)
+    .map((word, index) => {
+      if (word.length > 1 && word === word.toUpperCase()) return word;
+      const lower = word.toLowerCase();
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
+    .join(" ");
 }
 
 export function auditIssuesCsvHeaders(

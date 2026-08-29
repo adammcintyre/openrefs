@@ -64,21 +64,52 @@ export function HealthScore({
         </p>
       </div>
 
+      {/*
+        These three counts come from different parts of the crawl and are not
+        arithmetic on each other. In a real 25-page audit of brandpacks.com,
+        `pagesWithIssues` came back as 26 against 25 pages crawled — the issue
+        sections count some resources the page total does not. Each carries its
+        own explanation rather than being quietly reconciled into agreement,
+        which would mean publishing a number DataForSEO never reported.
+      */}
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-        <Stat label="Pages crawled" value={summary.pagesCrawled} />
-        <Stat label="Pages with issues" value={summary.pagesWithIssues} />
-        <Stat label="Issues found" value={summary.totalIssues} />
+        <Stat
+          label="Pages crawled"
+          value={summary.pagesCrawled}
+          help={`Pages the crawler fetched, against a limit of ${summary.pagesLimit.toLocaleString("en")}.`}
+        />
+        <Stat
+          label="Pages with issues"
+          value={summary.pagesWithIssues}
+          help="Distinct pages with at least one issue. Counted across the issue sections, so it need not match the crawled total exactly."
+        />
+        <Stat
+          label="Issues found"
+          value={summary.totalIssues}
+          help="Every failing check on every page. One page failing three checks counts three times here."
+        />
       </dl>
     </Card>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: number;
+  help: string;
+}) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dt className="text-xs text-muted-foreground" title={help}>
+        {label}
+      </dt>
       <dd className="text-lg font-semibold tabular-nums text-foreground">
         {value.toLocaleString("en")}
+        <span className="sr-only">{` — ${help}`}</span>
       </dd>
     </div>
   );

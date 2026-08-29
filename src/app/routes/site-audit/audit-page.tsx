@@ -182,6 +182,12 @@ function ProjectAudit({
   const [pendingDeletion, setPendingDeletion] = useState<AuditListItem | null>(
     null,
   );
+  /**
+   * A "you need to fix something in Settings" rejection from the run dialog —
+   * no credentials, or the spend cap. Held here so it renders as a notice with
+   * its link rather than as a toast that takes the link away with it.
+   */
+  const [blocked, setBlocked] = useState<unknown>(null);
 
   /*
    * Newest first, sorted here rather than trusted from the response. The list
@@ -330,6 +336,13 @@ function ProjectAudit({
 
       {credentialsConfigured ? null : <NoCredentialsNotice />}
 
+      {blocked === null ? null : (
+        <ApiErrorNotice
+          error={blocked}
+          fallback="That audit could not be started."
+        />
+      )}
+
       {listQuery.isError ? (
         <ApiErrorNotice
           error={listQuery.error}
@@ -407,7 +420,11 @@ function ProjectAudit({
         workspaceId={workspaceId}
         projectId={project.id}
         domain={project.domain}
-        onStarted={selectAudit}
+        onStarted={(auditId) => {
+          setBlocked(null);
+          selectAudit(auditId);
+        }}
+        onBlocked={setBlocked}
       />
 
       <ConfirmDialog
