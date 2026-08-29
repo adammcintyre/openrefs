@@ -89,6 +89,10 @@ const keywordIdeasParamsSchema = z.object({
   locationCode: z.number().int().positive(),
   languageCode: z.string().trim().min(2).max(8),
   limit: z.number().int().min(1).max(LABS_MAX_LIMIT).optional(),
+  offset: z.number().int().min(0).optional(),
+  /** Rows are flat here, so field paths carry no `keyword_data.` prefix. */
+  filters: z.array(z.custom<LabsFilter>()).optional(),
+  sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
 });
 
@@ -635,15 +639,20 @@ const keywordIdeasResultSchema = labsWrapperSchema(z.unknown());
 export function createLabsApi(client: DataForSeoClient): LabsApi {
   return {
     async googleKeywordIdeasLive(params) {
-      const parsed = keywordIdeasParamsSchema.safeParse(params);
-      if (!parsed.success) {
-        throw new ApiException(
-          "validation_failed",
-          `Invalid keyword ideas request (limit must be 1–${LABS_MAX_LIMIT}).`,
-          z.flattenError(parsed.error),
-        );
-      }
-      const { keyword, locationCode, languageCode, limit, fresh } = parsed.data;
+      const {
+        keyword,
+        locationCode,
+        languageCode,
+        limit,
+        offset,
+        filters,
+        sorts,
+        fresh,
+      } = parseParams(
+        keywordIdeasParamsSchema,
+        params,
+        `Invalid keyword ideas request (limit must be 1–${LABS_MAX_LIMIT}).`,
+      );
 
       const response = await client.request<unknown>({
         endpoint: GOOGLE_KEYWORD_IDEAS_LIVE,
@@ -655,6 +664,9 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
             location_code: locationCode,
             language_code: languageCode,
             limit,
+            offset,
+            filters: toLabsFilters(filters ?? []),
+            order_by: toLabsOrderBy(sorts ?? []),
           },
         ],
         // Ideas are derived from search volume and move on the same clock.

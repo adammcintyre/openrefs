@@ -1,0 +1,399 @@
+/**
+ *   GET /api/v1/domains/overview      labs domain_rank_overview
+ *   GET /api/v1/domains/history       labs historical_rank_overview
+ *   GET /api/v1/domains/keywords      labs ranked_keywords (organic | paid)
+ *   GET /api/v1/domains/pages         labs relevant_pages
+ *   GET /api/v1/domains/competitors   labs competitors_domain
+ *   GET /api/v1/domains/countries     domain_rank_overview across ~10 markets
+ *
+ * Every route is workspace-scoped and proves membership before it spends.
+ * Responses are the shared types in src/shared/domains.ts.
+ */
+import { Hono } from "hono";
+import { z } from "zod";
+
+import type {
+  DomainCompetitorsResponse,
+  DomainCountriesResponse,
+  DomainCountryRow,
+  DomainHistoryResponse,
+  DomainKeywordsResponse,
+  DomainOverviewResponse,
+  DomainPagesResponse,
+  RankMetrics,
+} from "../../shared/domains";
+import { createDataForSeoApi } from "../dataforseo";
+import type { DataForSeoApi, LabsRankMetrics } from "../dataforseo";
+import {
+  containsFilter,
+  RANKED_KEYWORDS_FIELDS,
+  RELEVANT_PAGES_FIELDS,
+} from "../dataforseo";
+import type { LabsFilter } from "../dataforseo/filters";
+import { rangeFilters } from "../dataforseo/filters";
+import { readQuery } from "../lib/validate";
+import {
+  authorizeWorkspace,
+  booleanParam,
+  domainParam,
+  marketQuerySchema,
+  pagingQuerySchema,
+  rangeQuerySchema,
+} from "../lib/research";
+import { requireSession } from "../middleware/auth";
+import type { AppEnv } from "../types";
+
+const domains = new Hono<AppEnv>();
+
+domains.use("*", requireSession);
+
+/**
+ * The country breakdown's markets.
+ *
+ * These codes were resolved from `dataforseo_labs/locations_and_languages`
+ * (the only location list Labs endpoints accept) and are pinned here rather
+ * than looked up per request: the breakdown is already ~10 paid calls, and
+ * adding an eleventh to re-derive constants that change approximately never
+ * would be worse. They follow DataForSEO's convention of ISO 3166-1 numeric
+ * + 2000, which is a useful sanity check but not a promise — each one was
+ * verified against the live list, not computed.
+ */
+export const COUNTRY_BREAKDOWN_MARKETS = [
+  { locationCode: 2840, countryIsoCode: "US", countryName: "United States" },
+  { locationCode: 2826, countryIsoCode: "GB", countryName: "United Kingdom" },
+  { locationCode: 2276, countryIsoCode: "DE", countryName: "Germany" },
+  { locationCode: 2250, countryIsoCode: "FR", countryName: "France" },
+  { locationCode: 2724, countryIsoCode: "ES", countryName: "Spain" },
+  { locationCode: 2380, countryIsoCode: "IT", countryName: "Italy" },
+  { locationCode: 2036, countryIsoCode: "AU", countryName: "Australia" },
+  { locationCode: 2124, countryIsoCode: "CA", countryName: "Canada" },
+  { locationCode: 2528, countryIsoCode: "NL", countryName: "Netherlands" },
+  { locationCode: 2356, countryIsoCode: "IN", countryName: "India" },
+] as const;
+
+const domainQuerySchema = marketQuerySchema.extend({
+  domain: domainParam,
+  fresh: booleanParam,
+});
+
+const listQuerySchema = domainQuerySchema.extend(pagingQuerySchema.shape);
+
+/** Upstream metrics to the shared shape. Renames `etv` to what it means. */
+function toRankMetrics(metrics: LabsRankMetrics): RankMetrics {
+  return {
+    keywordCount: metrics.count,
+    traffic: metrics.etv,
+    trafficValueUsd: metrics.estimatedPaidTrafficCostUsd,
+    positions: metrics.positions,
+    isNew: metrics.isNew,
+    isUp: metrics.isUp,
+    isDown: metrics.isDown,
+    isLost: metrics.isLost,
+  };
+}
+
+domains.get("/overview", async (c) => {
+  const query = readQuery(c, domainQuerySchema);
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const result = await dfs.labs.googleDomainRankOverviewLive({
+    target: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    fresh: query.fresh,
+  });
+
+  const body: DomainOverviewResponse = {
+    domain: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    organic: toRankMetrics(result.organic),
+    paid: toRankMetrics(result.paid),
+    costUsd: result.costUsd,
+    cached: result.cached,
+  };
+  return c.json(body);
+});
+
+domains.get("/history", async (c) => {
+  const query = readQuery(
+    c,
+    domainQuerySchema.extend({
+      dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }),
+  );
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const result = await dfs.labs.googleHistoricalRankOverviewLive({
+    target: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    dateFrom: query.dateFrom,
+    dateTo: query.dateTo,
+    fresh: query.fresh,
+  });
+
+  const body: DomainHistoryResponse = {
+    domain: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    // Oldest first, so a line chart reads left to right without re-sorting.
+    items: [...result.items]
+      .sort((a, b) => (a.period ?? "").localeCompare(b.period ?? ""))
+      .map((point) => ({
+        year: point.year,
+        month: point.month,
+        period: point.period,
+        organic: toRankMetrics(point.organic),
+        paid: toRankMetrics(point.paid),
+      })),
+    costUsd: result.costUsd,
+    cached: result.cached,
+  };
+  return c.json(body);
+});
+
+/**
+ * GET /api/v1/domains/keywords
+ *
+ * `paid=true` is not a client-side filter over a shared result set: it changes
+ * `item_types` upstream. DataForSEO refuses to sort or filter by a result type
+ * that was not requested, so asking for the default and filtering for paid
+ * would return nothing. The two views are separate queries, separately cached.
+ */
+domains.get("/keywords", async (c) => {
+  const query = readQuery(
+    c,
+    listQuerySchema.extend(rangeQuerySchema.shape).extend({
+      paid: booleanParam,
+      minPosition: z.coerce.number().int().min(1).optional(),
+      maxPosition: z.coerce.number().int().min(1).optional(),
+      include: z.string().trim().min(1).optional(),
+      exclude: z.string().trim().min(1).optional(),
+    }),
+  );
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const paid = query.paid === true;
+  const filters: LabsFilter[] = [
+    ...rangeFilters(
+      RANKED_KEYWORDS_FIELDS.searchVolume,
+      query.minVolume,
+      query.maxVolume,
+    ),
+    ...rangeFilters(
+      RANKED_KEYWORDS_FIELDS.keywordDifficulty,
+      query.minDifficulty,
+      query.maxDifficulty,
+    ),
+    ...rangeFilters(
+      RANKED_KEYWORDS_FIELDS.position,
+      query.minPosition,
+      query.maxPosition,
+    ),
+    ...(query.include
+      ? [containsFilter(RANKED_KEYWORDS_FIELDS.keyword, query.include)]
+      : []),
+    ...(query.exclude
+      ? [containsFilter(RANKED_KEYWORDS_FIELDS.keyword, query.exclude, true)]
+      : []),
+  ];
+
+  const result = await dfs.labs.googleRankedKeywordsLive({
+    target: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    limit: query.limit,
+    offset: query.offset,
+    itemTypes: [paid ? "paid" : "organic"],
+    filters,
+    sorts: [{ field: RANKED_KEYWORDS_FIELDS.position, direction: "asc" }],
+    fresh: query.fresh,
+  });
+
+  const body: DomainKeywordsResponse = {
+    domain: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    paid,
+    items: result.items.map((item) => ({
+      keyword: item.keyword,
+      searchVolume: item.metrics.searchVolume,
+      cpc: item.metrics.cpc,
+      competition: item.metrics.competition,
+      competitionLevel: item.metrics.competitionLevel,
+      keywordDifficulty: item.keywordDifficulty,
+      position: item.position,
+      positionAbsolute: item.positionAbsolute,
+      url: item.url,
+      title: item.title,
+      serpItemType: item.serpItemType,
+      traffic: item.etv,
+    })),
+    totalCount: result.totalCount,
+    itemsCount: result.itemsCount,
+    limit: query.limit,
+    offset: query.offset,
+    costUsd: result.costUsd,
+    cached: result.cached,
+  };
+  return c.json(body);
+});
+
+domains.get("/pages", async (c) => {
+  const query = readQuery(c, listQuerySchema);
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const result = await dfs.labs.googleRelevantPagesLive({
+    target: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    limit: query.limit,
+    offset: query.offset,
+    sorts: [{ field: RELEVANT_PAGES_FIELDS.organicEtv, direction: "desc" }],
+    fresh: query.fresh,
+  });
+
+  const body: DomainPagesResponse = {
+    domain: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    items: result.items.map((page) => ({
+      url: page.url,
+      organic: toRankMetrics(page.organic),
+      paid: toRankMetrics(page.paid),
+    })),
+    totalCount: result.totalCount,
+    itemsCount: result.itemsCount,
+    limit: query.limit,
+    offset: query.offset,
+    costUsd: result.costUsd,
+    cached: result.cached,
+  };
+  return c.json(body);
+});
+
+domains.get("/competitors", async (c) => {
+  const query = readQuery(c, listQuerySchema);
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const result = await dfs.labs.googleCompetitorsDomainLive({
+    target: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    limit: query.limit,
+    offset: query.offset,
+    sorts: [{ field: "metrics.organic.count", direction: "desc" }],
+    fresh: query.fresh,
+  });
+
+  const body: DomainCompetitorsResponse = {
+    domain: query.domain,
+    locationCode: query.location,
+    languageCode: query.language,
+    items: result.items.map((competitor) => ({
+      domain: competitor.domain,
+      commonKeywords: competitor.intersections,
+      avgPosition: competitor.avgPosition,
+      // The competitor's own totals...
+      organic: toRankMetrics(competitor.fullDomain.organic),
+      paid: toRankMetrics(competitor.fullDomain.paid),
+      // ...and the target's numbers on the keywords they share. Different
+      // domains' data; see the note on CompetitorRow.
+      sharedOrganic: toRankMetrics(competitor.sharedKeywords.organic),
+      sharedPaid: toRankMetrics(competitor.sharedKeywords.paid),
+    })),
+    totalCount: result.totalCount,
+    itemsCount: result.itemsCount,
+    limit: query.limit,
+    offset: query.offset,
+    costUsd: result.costUsd,
+    cached: result.cached,
+  };
+  return c.json(body);
+});
+
+/**
+ * GET /api/v1/domains/countries
+ *
+ * The expensive one: one domain_rank_overview per market, ~10 calls, which is
+ * why the UI hides it behind a button with a cost hint.
+ *
+ * `Promise.allSettled`, not `Promise.all`: a domain with no presence in one
+ * market, or a single upstream hiccup, must not cost the user the nine calls
+ * that worked. A failed market is omitted from `items` and named in
+ * `failedCountries`, and `costUsd` reflects only what actually completed.
+ */
+domains.get("/countries", async (c) => {
+  const query = readQuery(
+    c,
+    marketQuerySchema
+      .omit({ location: true })
+      .extend({ domain: domainParam, fresh: booleanParam }),
+  );
+  const { dfs } = await open(c.env, c.get("session"), query.workspace);
+
+  const settled = await Promise.allSettled(
+    COUNTRY_BREAKDOWN_MARKETS.map(async (market) => {
+      const result = await dfs.labs.googleDomainRankOverviewLive({
+        target: query.domain,
+        locationCode: market.locationCode,
+        languageCode: query.language,
+        fresh: query.fresh,
+      });
+      return { market, result };
+    }),
+  );
+
+  const items: DomainCountryRow[] = [];
+  const failedCountries: string[] = [];
+  let costUsd = 0;
+  let allCached = true;
+
+  for (const [index, outcome] of settled.entries()) {
+    const market = COUNTRY_BREAKDOWN_MARKETS[index];
+    if (market === undefined) continue;
+
+    if (outcome.status === "rejected") {
+      failedCountries.push(market.countryIsoCode);
+      continue;
+    }
+
+    const { result } = outcome.value;
+    costUsd += result.costUsd;
+    allCached &&= result.cached;
+    items.push({
+      locationCode: market.locationCode,
+      countryIsoCode: market.countryIsoCode,
+      countryName: market.countryName,
+      organic: toRankMetrics(result.organic),
+      paid: toRankMetrics(result.paid),
+    });
+  }
+
+  const body: DomainCountriesResponse = {
+    domain: query.domain,
+    languageCode: query.language,
+    // Biggest market first — the bar chart's order.
+    items: items.sort((a, b) => (b.organic.traffic ?? 0) - (a.organic.traffic ?? 0)),
+    failedCountries,
+    requestedCount: COUNTRY_BREAKDOWN_MARKETS.length,
+    costUsd,
+    // "Cached" only if nothing was paid for; an empty success set is not cached.
+    cached: items.length > 0 && allCached,
+  };
+  return c.json(body);
+});
+
+/** Membership proof plus a workspace-bound DataForSEO client. */
+async function open(
+  env: Env,
+  session: AppEnv["Variables"]["session"],
+  workspaceId: string,
+): Promise<{ dfs: DataForSeoApi }> {
+  const db = await authorizeWorkspace(env, session, workspaceId);
+  return { dfs: await createDataForSeoApi(env, db, workspaceId) };
+}
+
+export default domains;
