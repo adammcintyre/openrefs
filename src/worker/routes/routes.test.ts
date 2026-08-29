@@ -26,6 +26,7 @@ const MOUNT_PROBES: Record<string, string> = {
   "/backlinks": "/backlinks/summary",
   "/gap": "/gap/keywords",
   "/collections": "/collections",
+  "/projects": "/projects",
   "/meta": "/meta/locations",
   "/dev": "/dev/dfs-smoke",
 };
@@ -120,6 +121,17 @@ describe("session guard", () => {
     ["POST", "/collections/abc/keywords"],
     ["DELETE", "/collections/abc/keywords"],
     ["GET", "/collections/abc/export.csv"],
+    // Phase 3. Projects are pure D1, but they are tenant data, and the two
+    // keyword routes enqueue work that spends money — so the 401 lands before
+    // validation here for the same reason as everywhere above.
+    ["GET", "/projects"],
+    ["POST", "/projects"],
+    ["PATCH", "/projects/abc"],
+    ["DELETE", "/projects/abc"],
+    ["GET", "/projects/abc/keywords"],
+    ["POST", "/projects/abc/keywords"],
+    ["DELETE", "/projects/abc/keywords"],
+    ["POST", "/projects/abc/keywords/check-now"],
     // Free and non-tenant, but still not public.
     ["GET", "/meta/locations"],
     ["GET", "/meta/languages"],

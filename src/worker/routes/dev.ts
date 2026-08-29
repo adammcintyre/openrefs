@@ -2,6 +2,7 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { Hono } from "hono";
 
 import { apiUsage, getDb, workspaces } from "../../db";
+import { sweepJobs } from "../cron";
 import { ApiException } from "../http";
 import { createDataForSeoApi } from "../dataforseo";
 import { isDevelopment, maskLogin, resolveWorkspaceCredentials } from "../dataforseo/credentials";
@@ -63,9 +64,36 @@ dev.get("/", (c) =>
         description:
           "Sets a scratch workspace's spend cap to 0, calls a cheap wrapper, and asserts the call is refused with `spend_cap_exceeded` having written no paid api_usage row. Costs nothing — the point is that it never reaches the wire.",
       },
+      {
+        path: "POST /api/v1/dev/run-jobs",
+        description:
+          "Runs one jobs sweep synchronously and returns what each claimed job did. The same code path the */5 cron trigger takes, without waiting five minutes for it. May spend money: a claimed rank_post buys SERPs.",
+      },
     ],
   }),
 );
+
+/**
+ * One sweep, now, synchronously.
+ *
+ * `wrangler dev` does not fire cron triggers, so without this the jobs
+ * machinery could only be exercised by waiting for a deployment — which is a
+ * poor place to first discover a bug in it. It runs the identical
+ * `sweepJobs(env)` the scheduled handler runs, and returns the per-job
+ * outcomes the cron handler only logs, so a local run can assert on them.
+ *
+ * POST, not GET: a sweep mutates the queue and can spend money, and something
+ * that does that should not be reachable by a browser following a link.
+ */
+dev.post("/run-jobs", async (c) => {
+  const started = Date.now();
+  const result = await sweepJobs(c.env);
+  return c.json({
+    ...result,
+    tookMs: Date.now() - started,
+    at: new Date().toISOString(),
+  });
+});
 
 /**
  * End-to-end proof that the DataForSEO layer works against the real API:
