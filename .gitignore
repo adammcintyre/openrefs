@@ -8,6 +8,8 @@ coverage/
 .dev.vars.*
 .env
 .env.*
+# ...but the placeholder template is part of the repo
+!.dev.vars.example
 
 # Wrangler local state (includes local D1/KV/R2 data)
 .wrangler/
