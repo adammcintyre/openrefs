@@ -1,5 +1,8 @@
 import { NavLink, Outlet } from "react-router";
 
+import { PageHeader } from "../../components/ui";
+import { cn } from "../../components/ui/cn";
+
 const TABS = [
   { to: "/app/settings", label: "General", end: true },
   { to: "/app/settings/data-provider", label: "Data Provider", end: false },
@@ -8,28 +11,29 @@ const TABS = [
   { to: "/app/settings/danger", label: "Danger Zone", end: false },
 ];
 
+/**
+ * Each destination is a real route, not a client-side panel swap, so this
+ * stays a NavLink strip rather than the `Tabs` primitive — `Tabs` renders its
+ * own content in place and has no notion of an href.
+ */
 function tabClass({ isActive }: { isActive: boolean }): string {
-  const base =
-    "rounded-app px-3 py-1.5 text-sm transition-colors whitespace-nowrap";
-  return isActive
-    ? `${base} bg-tint font-medium text-tint-foreground`
-    : `${base} text-muted-foreground hover:bg-surface-muted hover:text-foreground`;
+  return cn(
+    "rounded-app px-3 py-1.5 text-sm whitespace-nowrap transition-colors",
+    isActive
+      ? "bg-tint font-medium text-tint-foreground"
+      : "text-muted-foreground hover:bg-surface-muted hover:text-foreground",
+  );
 }
 
 export function SettingsLayout() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          Workspace settings
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Members and roles, API keys, your DataForSEO credentials and the
-          workspace spend cap.
-        </p>
-      </header>
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        title="Workspace settings"
+        description="Members and roles, API keys, your DataForSEO credentials and the workspace spend cap."
+      />
 
-      <nav className="flex gap-1 overflow-x-auto border-b border-border pb-2">
+      <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-border pb-2">
         {TABS.map((tab) => (
           <NavLink key={tab.to} to={tab.to} end={tab.end} className={tabClass}>
             {tab.label}
