@@ -24,7 +24,7 @@ Categories (fixed ids, shown in this order): `slow_pages`, `core_web_vitals`, `h
 ## UI — Site Audit (`/app/site-audit`)
 
 ProjectPicker empty state → audit view:
-- No audits yet: explainer card + "Run first audit" (pages select with cost hint, JS-rendering toggle "≈2× cost").
+- No audits yet: explainer card + "Run first audit" (pages select with cost hint, JS-rendering toggle "≈10× cost" (verified pricing)).
 - Running: progress state (poll `GET /audits/:id` every ~10s client-side; show pages-crawled if the summary exposes it).
 - Done: health score (big number 0–100 from OnPage score), CWV strip for the homepage (LCP/CLS/INP + Lighthouse perf score, colour-banded), issues DataTable (category, severity Badge, affected pages, one-line description) → category drill-down page listing affected URLs (path + the specific failing values where available: current title, its length, target of redirect, etc.) with CSV export.
 - History: previous audits list; selecting one shows it; **compare chip** on the latest ("+3 / −7 vs previous") per category — computed from the two summary_json rollups, no extra fetches.

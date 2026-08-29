@@ -31,6 +31,8 @@ Cron + jobs infra hardened; daily SERP checks (standard queue) for tracked keywo
 
 ## Phase 4 — Site Audit
 
+**Status: shipped 2026-08-29 (v0.4.0).**
+
 OnPage API task lifecycle (post → poll via jobs → ingest), issue taxonomy mapped to: slow pages, CWV/Lighthouse, heavy CSS/HTML/JS, titles, meta descriptions, H1s, content, duplicates, indexability, social tags, localization, links, redirects, images, robots, sitemaps, structured data. Scores, per-issue drill-down, re-crawl compare.
 
 ## Phase 5 — Search Console

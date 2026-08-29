@@ -16,3 +16,4 @@ Owned by the orchestrator; phase agents pick these up when a spec says so. Add h
 - **Gap pages view** — `/api/v1/gap/pages` (page_intersection) is live and typed but has no UI; add as a sub-view of Gap Analysis. Target: Phase 7 polish.
 - **Gap "try Untapped" affordance** — when `missing` is empty, offer a one-click switch to Untapped rather than only explanatory copy. Target: Phase 7 polish.
 - **Re-home `components/gap/domain-scores.ts` + `score-cell.tsx`** under `components/backlinks/` (they're generic Backlinks bindings; landed under gap/ only for wave file-ownership reasons). Cosmetic.
+- **structured_data drill-down is an 18-column table** — worker could mark primary detail keys per category so the UI leads with the failing value. Target: Phase 7 polish.

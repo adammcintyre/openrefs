@@ -129,7 +129,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Crawl your site for speed, indexability, metadata, duplicates, links and structured data issues.",
         phase: 4,
-        live: false,
+        live: true,
         icon: ClipboardCheck,
       },
       {
