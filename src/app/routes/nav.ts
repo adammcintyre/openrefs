@@ -138,7 +138,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Bind a Google property and surface striking-distance, low-CTR and cannibalisation reports.",
         phase: 5,
-        live: false,
+        live: true,
         icon: ChartLine,
       },
       {
