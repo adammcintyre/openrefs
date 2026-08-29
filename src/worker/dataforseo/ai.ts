@@ -34,6 +34,18 @@
  *     configured to search: an answer with no sources cannot tell us whether
  *     anyone is cited.
  *
+ *  6. **`web_search: true` alone is not enough on ChatGPT.** Measured
+ *     2026-08-29: `gpt-4o-mini` with `web_search: true` answered
+ *     "best sites for free photoshop templates" from training data — zero
+ *     annotations, and a total cost of $0.000774, i.e. $0.000174 of tokens on
+ *     top of the base fee, which is far too little to have fetched anything.
+ *     `force_web_search` is the documented companion flag ("to enable this
+ *     parameter, web_search must also be enabled") and is what actually makes
+ *     the engine go and look. Without it a ChatGPT run can never produce a
+ *     `cited` verdict, which would quietly report every project as uncited on
+ *     the engine most people care about. Set for ChatGPT and Claude; Gemini
+ *     and Perplexity do not have it.
+ *
  * The `live` flow is used rather than the standard queue because AI Visibility
  * has a "Run now" button. The queue is cheaper per task ($0.0002 plus a
  * refundable $0.01 prepayment) but is documented at "up to 72 hours"; live is
@@ -149,6 +161,7 @@ export function buildLlmPayload(params: LlmResponseParams): Record<string, unkno
 
     case "claude":
       base["web_search"] = true;
+      base["force_web_search"] = true;
       if (country !== undefined && CLAUDE_WEB_SEARCH_COUNTRIES.has(country)) {
         base["web_search_country_iso_code"] = country;
       }
@@ -156,6 +169,7 @@ export function buildLlmPayload(params: LlmResponseParams): Record<string, unkno
 
     case "chat_gpt":
       base["web_search"] = true;
+      base["force_web_search"] = true;
       if (country !== undefined) base["web_search_country_iso_code"] = country;
       return base;
   }

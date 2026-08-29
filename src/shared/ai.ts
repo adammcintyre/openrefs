@@ -104,19 +104,21 @@ export const AI_COST_IS_AN_ESTIMATE = true;
  * this feature exists to ask. Every id here was confirmed present in that
  * engine's `llm_responses/models` list with `web_search_supported: true`.
  *
- * **About `estimatedCostUsd`.** Two of these are measured, two are derived:
+ * **About `estimatedCostUsd`.** Two of these were measured against the live
+ * API, two are derived:
  *
- *  - `perplexity` — **measured**. DataForSEO's own live example for
- *    `sonar-reasoning-pro` totals $0.006724. `sonar` is their cheapest model,
- *    so this is an upper bound for it.
- *  - `chat_gpt` — **measured**. Their live example for `gpt-4.1-mini` with
- *    `web_search: true` totals $0.029631; the bulk of that is OpenAI's
- *    per-call web-search charge, which does not vary much by model, so a
- *    4o-mini run lands in the same region.
+ *  - `perplexity` — **measured 2026-08-29**, six real runs at $0.005886 to
+ *    $0.005995 (`sonar`, prompts about design templates). Rounded up.
+ *  - `chat_gpt` — **measured 2026-08-29**, three real runs at $0.027147 to
+ *    $0.027243 (`gpt-4o-mini` with `force_web_search`). Almost all of that is
+ *    OpenAI's per-call web-search charge, which is why the same model without
+ *    a search costs $0.000774 — a 35× difference that no per-call price list
+ *    could have told us. Rounded up.
  *  - `claude` and `gemini` — **derived**, and the softest numbers here: no
- *    first-party example exists for either, so these extrapolate the same
- *    token bill plus the provider's published web-search tool fee. Treat them
- *    as order-of-magnitude. They are used only for the pre-run hint.
+ *    first-party example exists for either and neither has been run, so these
+ *    extrapolate the same token bill plus the provider's published web-search
+ *    tool fee. Treat them as order-of-magnitude, and replace them with
+ *    measurements the first time either engine is run in anger.
  */
 export const AI_ENGINES: Readonly<Record<AiEngineId, AiEngine>> = {
   perplexity: {
@@ -125,7 +127,7 @@ export const AI_ENGINES: Readonly<Record<AiEngineId, AiEngine>> = {
     // Their cheapest Sonar model; every Sonar model is web-backed.
     model: "sonar",
     webSearch: "always",
-    estimatedCostUsd: 0.007,
+    estimatedCostUsd: 0.006,
   },
   claude: {
     id: "claude",
@@ -139,7 +141,7 @@ export const AI_ENGINES: Readonly<Record<AiEngineId, AiEngine>> = {
     label: "ChatGPT",
     model: "gpt-4o-mini",
     webSearch: "parameter",
-    estimatedCostUsd: 0.03,
+    estimatedCostUsd: 0.028,
   },
   gemini: {
     id: "gemini",
