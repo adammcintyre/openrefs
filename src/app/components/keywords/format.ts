@@ -11,6 +11,7 @@
  * thousands separator with a dollar sign reads as a conversion that never
  * happened. It also keeps the unit tests deterministic.
  */
+import type { MonthlyVolumePoint } from "../../../shared/keywords";
 import type { BadgeVariant } from "../ui";
 
 /** What a metric renders as when the API did not report it. */
@@ -90,6 +91,32 @@ export function formatMonthLabel(period: string | null): string {
   return `${MONTHS[month - 1]} ${String(year).slice(2)}`;
 }
 
+/**
+ * Monthly volume points in chronological order, oldest first.
+ *
+ * Charting these in wire order is not safe. Verified against the live API on
+ * 2026-08-29, `/keywords/overview` returns `monthlySearches` NEWEST first
+ * (2026-07 … 2025-08), while src/shared/keywords.ts documents the field as
+ * "oldest first". Feeding that straight to a line chart draws twelve months of
+ * history right-to-left: it looks perfectly normal and reads exactly backwards,
+ * which is the worst kind of wrong.
+ *
+ * Sorting here is correct under either upstream order, so this stays right
+ * however that discrepancy is eventually settled. `period` is `YYYY-MM`, so a
+ * lexicographic compare is a chronological one. Points with no period sort
+ * last rather than being dropped — an unusable date is not a reason to hide a
+ * volume reading.
+ */
+export function sortMonthlyPoints(
+  points: ReadonlyArray<MonthlyVolumePoint>,
+): MonthlyVolumePoint[] {
+  return [...points].sort((a, b) => {
+    if (a.period === null) return b.period === null ? 0 : 1;
+    if (b.period === null) return -1;
+    return a.period.localeCompare(b.period);
+  });
+}
+
 /** An ISO timestamp as a short absolute date. Invalid input passes through. */
 export function formatDate(iso: string | null | undefined): string {
   if (iso === null || iso === undefined || iso === "") return EM_DASH;
@@ -153,8 +180,33 @@ export function formatIntent(intent: string | null | undefined): string {
 
 /**
  * A SERP feature type as a human label: "people_also_ask" to "People also ask".
+ *
+ * The overrides exist because the generic rule mangles acronyms — "ai_overview"
+ * would sentence-case to "Ai overview". DataForSEO owns this vocabulary and
+ * adds to it, so unknown types still fall through to the generic rule rather
+ * than needing an entry here.
  */
+const SERP_FEATURE_LABELS: Record<string, string> = {
+  ai_overview: "AI overview",
+  faq: "FAQ",
+  google_flights: "Google Flights",
+  google_hotels: "Google Hotels",
+  google_news: "Google News",
+  google_posts: "Google Posts",
+  images: "Images",
+  jobs: "Jobs",
+  map: "Map",
+  local_pack: "Local pack",
+  paid: "Ads",
+  top_stories: "Top stories",
+  twitter: "X (Twitter)",
+  video: "Video",
+};
+
 export function formatSerpFeature(feature: string): string {
+  const override = SERP_FEATURE_LABELS[feature];
+  if (override !== undefined) return override;
+
   const spaced = feature.replaceAll("_", " ").trim();
   if (spaced === "") return feature;
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);

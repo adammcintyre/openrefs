@@ -21,6 +21,7 @@ import {
   formatMonthLabel,
   formatPercent,
   formatVolume,
+  sortMonthlyPoints,
 } from "../../components/keywords/format";
 import type { MarketSelection } from "../../components/keywords/market";
 import { useKeywordOverview } from "../../components/keywords/queries";
@@ -48,7 +49,9 @@ export function KeywordOverviewStrip({
 
   const band = difficultyBand(data?.keywordDifficulty);
 
-  const chartData = (data?.monthlySearches ?? []).map((point) => ({
+  // Sorted oldest-first before charting: the wire order is newest-first, which
+  // would draw the year backwards. See sortMonthlyPoints for the detail.
+  const chartData = sortMonthlyPoints(data?.monthlySearches ?? []).map((point) => ({
     period: formatMonthLabel(point.period),
     volume: point.searchVolume,
   }));
