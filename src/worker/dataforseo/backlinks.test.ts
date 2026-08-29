@@ -27,6 +27,8 @@ function fakeClient(result: unknown): {
       requests.push(req);
       return {
         results: [result as TResult],
+        // Backlinks endpoints are not task-based, so there is nothing here.
+        tasks: [],
         costUsd: 0.024,
         cached: false,
         statusCode: 20000,

@@ -26,6 +26,26 @@ export const DFS_SANDBOX_BASE_URL = "https://sandbox.dataforseo.com/v3/";
 export const DFS_OK_STATUS = 20000;
 
 /**
+ * "Task Created." — the per-task status a successful `task_post` returns.
+ *
+ * The envelope still says 20000; only `tasks[].status_code` is 20100. Verified
+ * against https://docs.dataforseo.com/v3/appendix/errors/ (2026-08-29). Without
+ * `okTaskStatusCodes` accepting this, `assertOk` rejects every task that was
+ * created perfectly well — and, because metering happens first, after paying
+ * for it.
+ */
+export const DFS_TASK_CREATED_STATUS = 20100;
+
+/**
+ * "Task Handed." / "Task In Queue." — a `task_get` for work that has not
+ * finished yet. Not failures: the standard queue answers with these for the
+ * few minutes between posting and completion, and the collector's whole job is
+ * to come back later.
+ */
+export const DFS_TASK_HANDED_STATUS = 40601;
+export const DFS_TASK_IN_QUEUE_STATUS = 40602;
+
+/**
  * Per-attempt ceilings on one upstream connection. Two distinct failure modes
  * observed in production (2026-08): a hung connection that a fresh attempt
  * beats in under a second (search_volume), and an endpoint that legitimately
@@ -112,11 +132,64 @@ export interface DataForSeoRequest<TPayload = unknown> {
    * any endpoint outside `GLOBAL_CACHE_ENDPOINTS`.
    */
   cacheScope?: CacheScope;
+  /**
+   * Per-task status codes to accept besides 20000.
+   *
+   * The task queue speaks in codes that are not failures: `task_post` reports
+   * 20100 "Task Created." on success, and `task_get` reports 40601/40602 while
+   * the SERP is still being fetched. A wrapper that expects those passes them
+   * here and classifies them itself; everything else still throws.
+   */
+  okTaskStatusCodes?: readonly number[];
+  /**
+   * Skip the spend-cap check for an endpoint DataForSEO bills at $0.
+   *
+   * The only sanctioned use is retrieving results that have **already been paid
+   * for** — `tasks_ready` and `task_get`. A workspace that posts tasks and then
+   * reaches its cap must still be able to collect them; blocking that would
+   * throw away money already spent while protecting nothing, since these calls
+   * cannot themselves spend. Same reasoning as `balance()`, and equally narrow.
+   *
+   * It does not skip metering: every call still writes an `api_usage` row with
+   * whatever cost the API reported, so an endpoint that unexpectedly starts
+   * billing shows up in the usage report rather than hiding here.
+   */
+  spendCapExempt?: boolean;
+}
+
+/**
+ * One entry of `tasks[]`, kept because the task queue's identity lives here
+ * and nowhere else: `task_post` returns `result: null` and puts the id — the
+ * only handle on the SERP we just bought — on the task envelope. `flatten()`
+ * would discard it.
+ */
+export interface DataForSeoTask {
+  /**
+   * DataForSEO's task id. UUID-*shaped* but not a UUID (the first segment
+   * encodes MMDDHHMM), so it is an opaque string and must never be validated
+   * as a UUID.
+   */
+  id: string | null;
+  statusCode: number;
+  statusMessage: string;
+  costUsd: number;
+  /**
+   * The echo of what we sent, including `tag` — which is how a task id is
+   * correlated back to the row that asked for it.
+   */
+  data: Record<string, unknown> | null;
 }
 
 export interface DataForSeoResponse<TResult = unknown> {
   /** Parsed `tasks[].result`, flattened. */
   results: TResult[];
+  /**
+   * The task envelopes, unflattened. Empty for a cache hit — nothing here is
+   * persisted to KV, because a task id is a one-shot handle and re-serving a
+   * stale one would be worse than useless. The task flows all use
+   * `ttl: "none"`, so they never take that path.
+   */
+  tasks: DataForSeoTask[];
   /** USD reported by the API. Zero when served from cache. */
   costUsd: number;
   cached: boolean;
@@ -251,6 +324,8 @@ interface DfsTask<TResult> {
   cost?: number;
   result_count?: number;
   path?: string[];
+  /** Echo of the posted task, `tag` included. Present on the task endpoints. */
+  data?: Record<string, unknown> | null;
   result?: TResult[] | null;
 }
 
@@ -427,10 +502,14 @@ export function createDataForSeoClient(
     );
   }
 
-  /** Throws unless the envelope and every task in it reported 20000. */
+  /**
+   * Throws unless the envelope reported 20000 and every task reported 20000 or
+   * one of the codes the caller declared expected (`okTaskStatusCodes`).
+   */
   function assertOk<TResult>(
     endpoint: string,
     envelope: DfsEnvelope<TResult>,
+    okTaskStatusCodes: readonly number[],
   ): void {
     const topStatus = envelope.status_code ?? 0;
     if (topStatus !== DFS_OK_STATUS) {
@@ -438,14 +517,25 @@ export function createDataForSeoClient(
     }
     for (const task of envelope.tasks ?? []) {
       const taskStatus = task.status_code ?? 0;
-      if (taskStatus !== DFS_OK_STATUS) {
-        throw upstreamError(endpoint, taskStatus, task.status_message);
-      }
+      if (taskStatus === DFS_OK_STATUS) continue;
+      if (okTaskStatusCodes.includes(taskStatus)) continue;
+      throw upstreamError(endpoint, taskStatus, task.status_message);
     }
   }
 
   function flatten<TResult>(envelope: DfsEnvelope<TResult>): TResult[] {
     return (envelope.tasks ?? []).flatMap((task) => task.result ?? []);
+  }
+
+  /** The task envelopes, normalised. See `DataForSeoTask`. */
+  function toTasks<TResult>(envelope: DfsEnvelope<TResult>): DataForSeoTask[] {
+    return (envelope.tasks ?? []).map((task) => ({
+      id: task.id ?? null,
+      statusCode: task.status_code ?? 0,
+      statusMessage: task.status_message ?? "",
+      costUsd: toFiniteNumber(task.cost),
+      data: task.data ?? null,
+    }));
   }
 
   return {
@@ -459,6 +549,8 @@ export function createDataForSeoClient(
         fresh = false,
         method = "POST",
         cacheScope = "workspace",
+        okTaskStatusCodes = [],
+        spendCapExempt = false,
       } = req;
       const cacheable = ttl !== "none";
       const global = cacheScope === "global";
@@ -480,6 +572,8 @@ export function createDataForSeoClient(
           await meter(endpoint, 0, true);
           return {
             results: hit.results,
+            // Deliberately not cached: see `DataForSeoResponse.tasks`.
+            tasks: [],
             costUsd: 0,
             cached: true,
             statusCode: hit.statusCode,
@@ -492,8 +586,9 @@ export function createDataForSeoClient(
       //    lists: DataForSEO bills them at $0, and a workspace sitting at its
       //    cap still has to be able to render a location picker. Same reasoning
       //    as `balance()` below, and equally narrow — the allowlist is the
-      //    thing keeping it honest.
-      if (!global) await assertWithinSpendCap();
+      //    thing keeping it honest. `spendCapExempt` extends it to collecting
+      //    task results the workspace has already paid for.
+      if (!global && !spendCapExempt) await assertWithinSpendCap();
 
       // 4. The call.
       const envelope = await call<TResult>(
@@ -507,9 +602,10 @@ export function createDataForSeoClient(
       const costUsd = toFiniteNumber(envelope.cost);
       await meter(endpoint, costUsd, false);
 
-      assertOk(endpoint, envelope);
+      assertOk(endpoint, envelope, okTaskStatusCodes);
 
       const results = flatten<TResult>(envelope);
+      const tasks = toTasks(envelope);
       const first = (envelope.tasks ?? [])[0];
       const statusCode = first?.status_code ?? envelope.status_code ?? 0;
       const statusMessage =
@@ -529,7 +625,7 @@ export function createDataForSeoClient(
         });
       }
 
-      return { results, costUsd, cached: false, statusCode, statusMessage };
+      return { results, tasks, costUsd, cached: false, statusCode, statusMessage };
     },
 
     async balance(): Promise<{ balanceUsd: number }> {
@@ -539,7 +635,7 @@ export function createDataForSeoClient(
       // Still metered, so the usage report stays a complete record of calls.
       const envelope = await call<unknown>(endpoint, "GET");
       await meter(endpoint, toFiniteNumber(envelope.cost), false);
-      assertOk(endpoint, envelope);
+      assertOk(endpoint, envelope, []);
 
       const parsed = userDataResultSchema.safeParse(flatten(envelope)[0]);
       if (!parsed.success || parsed.data.money?.balance === undefined) {
