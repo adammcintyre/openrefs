@@ -1,0 +1,55 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "openrefs",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The React SPA is served from the same Worker as static assets.
+  // `directory` is rewritten by @cloudflare/vite-plugin at build time to point at
+  // the real client bundle; it is declared here so the plain `wrangler` CLI
+  // (d1 migrations, types, secret put) can parse this config without a build.
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Everything under /api/* must reach the Worker, never the asset server.
+    "run_worker_first": ["/api/*"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "openrefs-db",
+      // Placeholder. `scripts/setup-cloudflare.sh` creates the database and
+      // replaces this id with the real one. Never commit a real account's id.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      // Placeholder — replaced by scripts/setup-cloudflare.sh.
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "BLOBS",
+      "bucket_name": "openrefs-blobs"
+    }
+  ],
+
+  // Background work is cron + the D1 `jobs` table (no Queues / Durable Objects,
+  // so self-hosting stays on the Cloudflare free plan).
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
