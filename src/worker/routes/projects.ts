@@ -456,7 +456,7 @@ projectsRouter.post("/:id/keywords/check-now", async (c) => {
   const body: RankCheckEnqueuedResponse = {
     enqueued: true,
     keywordCount,
-    estimatedCostUsd: keywordCount * RANK_CHECK_COST_PER_KEYWORD_USD,
+    estimatedCostUsd: roundUsd(keywordCount * RANK_CHECK_COST_PER_KEYWORD_USD),
     nextAllowedAt: nextAllowedAt.toISOString(),
   };
   return c.json(body, 202);
@@ -700,6 +700,15 @@ function parseFeatures(raw: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Six decimal places — enough for a single keyword at a fraction of a cent,
+ * and enough to stop binary floating point putting `0.018000000000000002` in
+ * an API response. 3 × $0.006 should read as $0.018.
+ */
+function roundUsd(usd: number): number {
+  return Math.round(usd * 1_000_000) / 1_000_000;
 }
 
 /** Trimmed, lowercased, first occurrence wins — the form the index dedupes on. */
