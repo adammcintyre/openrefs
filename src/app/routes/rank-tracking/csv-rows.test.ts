@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TrackedKeywordRow } from "../../../shared/tracking";
 import {
   TRACKING_CSV_HEADERS,
+  aiOverviewCell,
   rowStatus,
   trackingCsvFilename,
   trackingCsvRows,
@@ -22,6 +23,7 @@ function row(overrides: Partial<TrackedKeywordRow> = {}): TrackedKeywordRow {
     change7d: null,
     change30d: null,
     bestPosition: null,
+    aiOverview: false,
     series: [],
     ...overrides,
   };
@@ -84,6 +86,7 @@ describe("trackingCsvRows", () => {
       5,
       -2,
       3,
+      "no",
       "https://brandpacks.com/templates",
       "2026-08-20",
     ]);
@@ -91,8 +94,18 @@ describe("trackingCsvRows", () => {
 
   it("writes empty cells for absent values, never a placeholder number", () => {
     const cells = trackingCsvRows([row()])[0] ?? [];
-    // position, the three deltas, best, url and date are all unknown here.
-    expect(cells.slice(5)).toEqual([null, null, null, null, null, null, null]);
+    // position, the three deltas, best, AI Overview, url and date are all
+    // unknown here.
+    expect(cells.slice(5)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
   it("distinguishes an unranked check from an unchecked keyword", () => {
@@ -102,7 +115,31 @@ describe("trackingCsvRows", () => {
 
     expect(unranked?.[4]).toBe("not_in_top_100");
     expect(unranked?.[5]).toBeNull();
-    expect(unranked?.[11]).toBe("2026-08-20");
+    expect(unranked?.[12]).toBe("2026-08-20");
+  });
+});
+
+describe("aiOverviewCell", () => {
+  const checked = {
+    date: "2026-08-20",
+    position: 4,
+    url: null,
+    serpFeatures: ["organic", "ai_overview"],
+  };
+
+  it("reports yes and no only for keywords that have been checked", () => {
+    expect(aiOverviewCell(row({ latest: checked, aiOverview: true }))).toBe("yes");
+    expect(aiOverviewCell(row({ latest: checked, aiOverview: false }))).toBe("no");
+  });
+
+  /*
+   * The trap this export exists to avoid. `aiOverview` is false on a keyword
+   * that has never been checked as well as on one Google showed no overview
+   * for, so writing the boolean straight out would export "no" — a claim about
+   * a SERP nobody has fetched.
+   */
+  it("leaves the cell empty when no SERP has ever been recorded", () => {
+    expect(aiOverviewCell(row({ latest: null, aiOverview: false }))).toBeNull();
   });
 });
 

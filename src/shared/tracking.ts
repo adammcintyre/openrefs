@@ -137,13 +137,15 @@ export interface TrackedKeywordRow {
    * checked" — a keyword with no snapshot has no features to read — which the
    * UI can disambiguate from `latest === null`.
    *
-   * **Optional in the type, always present in the response.** The Phase 6
-   * retrofit had to be additive: making it required would have failed the
-   * typecheck on every pre-existing rank-tracking test fixture, which is a
-   * breaking change dressed as a new field. Read it as `row.aiOverview ??
-   * false`; tighten it to required once the fixtures carry it.
+   * **Required**, as of the Phase 6 UI wave. It landed optional so the
+   * retrofit could be additive against fixtures that predated it; the route
+   * has always sent it (routes/projects.ts computes it for every row), so the
+   * optionality only ever described the test fixtures, not the wire. Those now
+   * carry it and the type says what the response actually contains — no
+   * `?? false` at the call sites, and a fixture that forgets it fails to
+   * compile instead of silently testing a shape the API never sends.
    */
-  aiOverview?: boolean;
+  aiOverview: boolean;
 
   /** Oldest first, last `RANK_SERIES_DAYS` days. Sparse — see `RankPoint`. */
   series: RankPoint[];

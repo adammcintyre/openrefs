@@ -21,13 +21,13 @@
  * for `undefined` only — so every nullable accessor maps null to undefined,
  * while the cell reads `row.original` to tell the cases apart.
  */
-import { Trash2 } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 
 import type { TrackedKeywordRow } from "../../../shared/tracking";
 import { Sparkline } from "../charts/sparkline";
-import { Button, DataTable, createDataTableColumns, cn } from "../ui";
+import { Badge, Button, DataTable, createDataTableColumns, cn } from "../ui";
 import type { DataTableColumn } from "../ui";
 import { DeviceBadge } from "./device-select";
 import {
@@ -196,6 +196,52 @@ function SparklineCell({ row }: { row: TrackedKeywordRow }) {
   return <Sparkline series={row.series} label={label} />;
 }
 
+/**
+ * The AI Overview cell (Phase 6 retrofit).
+ *
+ * Free data: the flag is read off SERP features the latest snapshot already
+ * stores, so this column costs nothing to show. It earns its width by
+ * explaining a position that under-delivers — an AI Overview pushes the first
+ * organic result down the page whatever its rank says.
+ *
+ * Three states, and the third is the one worth being careful about. The
+ * contract sends `false` both for "checked, no overview" and for "never
+ * checked", because a keyword with no snapshot has no features to read. Only
+ * `latest` can tell those apart, so an unchecked row says so rather than
+ * claiming Google shows no overview — the same distinction PositionCell draws,
+ * for the same reason.
+ */
+function AiOverviewCell({ row }: { row: TrackedKeywordRow }) {
+  if (row.latest === null) {
+    return (
+      <span
+        className="text-xs text-muted-foreground italic"
+        title={`Not checked yet — no SERP has been recorded for "${row.keyword}".`}
+      >
+        —
+      </span>
+    );
+  }
+
+  if (!row.aiOverview) {
+    return (
+      <span
+        className="text-muted-foreground"
+        title={`No AI Overview for "${row.keyword}" at the last check.`}
+      >
+        —
+      </span>
+    );
+  }
+
+  return (
+    <Badge variant="info" title="Google shows an AI Overview for this keyword">
+      <Sparkles className="size-3" aria-hidden="true" />
+      Yes
+    </Badge>
+  );
+}
+
 function RemoveCell({ row }: { row: TrackedKeywordRow }) {
   const { onRemove } = useRowContext();
   return (
@@ -261,6 +307,15 @@ const columns: Array<DataTableColumn<TrackedKeywordRow>> = [
         {formatBestPosition(info.row.original.bestPosition)}
       </span>
     ),
+  }),
+  col.accessor((row) => row.aiOverview, {
+    id: "aiOverview",
+    header: () => (
+      <span title="Google shows an AI Overview for this keyword">
+        AI Overview
+      </span>
+    ),
+    cell: (info) => <AiOverviewCell row={info.row.original} />,
   }),
   col.display({
     id: "url",
