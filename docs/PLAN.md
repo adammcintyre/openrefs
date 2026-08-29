@@ -25,6 +25,8 @@ Backlink profile (summary, referring domains, anchors, new/lost, history chart, 
 
 ## Phase 3 — Rank Tracking
 
+**Status: shipped 2026-08-29 (v0.3.0).**
+
 Cron + jobs infra hardened; daily SERP checks (standard queue) for tracked keywords per project (device + location), position history charts, best page, SERP features, movers report.
 
 ## Phase 4 — Site Audit
