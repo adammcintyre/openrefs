@@ -1,8 +1,10 @@
-import { Link, NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet, useNavigate } from "react-router";
 
 import { ThemeToggle } from "../components/theme-toggle";
+import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { Wordmark } from "../components/wordmark";
 import { APP_VERSION } from "../../shared/version";
+import { useLogout, useMe } from "../lib/session";
 import { NAV_GROUPS } from "./nav";
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
@@ -13,11 +15,37 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
     : `${base} text-muted-foreground hover:bg-surface-muted hover:text-foreground`;
 }
 
+function AccountMenu() {
+  const navigate = useNavigate();
+  const logout = useLogout();
+  const me = useMe();
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="hidden max-w-48 truncate text-sm text-muted-foreground sm:inline">
+        {me.data?.user.email}
+      </span>
+      <button
+        type="button"
+        disabled={logout.isPending}
+        onClick={() =>
+          logout.mutate(undefined, {
+            onSuccess: () => void navigate("/login", { replace: true }),
+          })
+        }
+        className="rounded-app border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-surface-muted disabled:opacity-60"
+      >
+        {logout.isPending ? "Signing out…" : "Sign out"}
+      </button>
+    </div>
+  );
+}
+
 /**
  * Sidebar + header shell for everything under /app.
  *
- * Intentionally plain: no collapsible sidebar, no workspace switcher wiring.
- * The workspace switcher slot is marked below for the auth/workspaces agent.
+ * Intentionally plain: no collapsible sidebar. The workspace switcher and the
+ * account menu live in the header.
  */
 export function AppLayout() {
   return (
@@ -28,8 +56,6 @@ export function AppLayout() {
             <Wordmark />
           </Link>
         </div>
-
-        {/* TODO(workspaces): workspace switcher goes here. */}
 
         <nav className="flex-1 space-y-5 overflow-y-auto p-3">
           {NAV_GROUPS.map((group) => (
@@ -64,9 +90,10 @@ export function AppLayout() {
           <Link to="/app" className="text-base md:hidden">
             <Wordmark />
           </Link>
+          <WorkspaceSwitcher />
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
-            {/* TODO(auth): account menu / sign out. */}
+            <AccountMenu />
           </div>
         </header>
 

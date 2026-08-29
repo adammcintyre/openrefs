@@ -1,21 +1,50 @@
-import type { FormEvent } from "react";
-import { Link } from "react-router";
+import { useState, type FormEvent } from "react";
+import { Link, Navigate, useLocation, useNavigate } from "react-router";
 
 import { AuthCard, Field } from "../components/auth-card";
+import { errorMessage } from "../lib/api";
+import { useLogin, useMe } from "../lib/session";
 
-/**
- * TODO(auth): form shell only — this screen has no logic.
- *
- * The auth agent owns it. Expected behaviour: POST /api/v1/auth/login with
- * { email, password }, let the Worker set the httpOnly session cookie, then
- * navigate to /app. Surface `unauthorized` from the error body as a generic
- * "wrong email or password" so the form cannot be used to enumerate accounts.
- */
+interface RedirectState {
+  from?: { pathname?: string };
+}
+
 export function Login() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const me = useMe();
+  const login = useLogin();
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Where the guard bounced them from, so a deep link survives signing in.
+  const destination =
+    (location.state as RedirectState | null)?.from?.pathname ?? "/app";
+
+  if (me.data != null) return <Navigate to="/app" replace />;
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    // No network call yet. Prevents a native GET navigation in the meantime.
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "");
+
+    if (email === "" || password === "") {
+      setLocalError("Enter your email and password.");
+      return;
+    }
+    setLocalError(null);
+
+    login.mutate(
+      { email, password },
+      { onSuccess: () => void navigate(destination, { replace: true }) },
+    );
   };
+
+  const message =
+    localError ??
+    (login.error === null
+      ? null
+      : errorMessage(login.error, "Could not sign you in."));
 
   return (
     <AuthCard
@@ -30,7 +59,7 @@ export function Login() {
         </>
       }
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <Field id="email" label="Email" type="email" autoComplete="email" />
         <Field
           id="password"
@@ -38,15 +67,23 @@ export function Login() {
           type="password"
           autoComplete="current-password"
         />
+
+        {message !== null && (
+          <p
+            role="alert"
+            className="rounded-app border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          >
+            {message}
+          </p>
+        )}
+
         <button
           type="submit"
-          className="w-full rounded-app bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+          disabled={login.isPending}
+          className="w-full rounded-app bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
         >
-          Sign in
+          {login.isPending ? "Signing in…" : "Sign in"}
         </button>
-        <p className="text-xs text-muted-foreground">
-          Not wired up yet — authentication lands in Phase 0.
-        </p>
       </form>
     </AuthCard>
   );
