@@ -19,6 +19,8 @@ Keyword search (volume, history, difficulty, intent, CPC), ideas/related/suggest
 
 ## Phase 2 — Backlinks + Gap Analysis
 
+**Status: shipped 2026-08-29 (v0.2.0).**
+
 Backlink profile (summary, referring domains, anchors, new/lost, history chart, Domain/Page Score). Gap Analysis: keywords competitors rank for that you don't (domain intersection), multi-competitor, filters (volume/difficulty/position), export; page-level gap.
 
 ## Phase 3 — Rank Tracking

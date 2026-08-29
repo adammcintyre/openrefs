@@ -8,9 +8,13 @@ An open-source alternative to tools like Ahrefs. You bring a DataForSEO API
 key, OpenRefs turns it into a full SEO workbench, and you own both the data and
 the bill.
 
-> **Status: work in progress.** This is the Phase 0 scaffold. The application
-> shell, database schema and API skeleton are in place; the research modules
-> are not built yet. Nothing here is ready for production use.
+> **Status: in active development.** Live today: accounts and workspaces,
+> Keyword Research (volumes, difficulty, intent, SERPs, collections), Domain
+> Overview (traffic estimates, top keywords/pages, competitors, countries),
+> Backlinks (Domain Score, link profile, growth history), and Gap Analysis
+> (missing / weak / untapped keywords vs up to four competitors) — all with
+> per-call cost metering and spend caps. In progress: rank tracking, site
+> audits, Search Console, AI visibility, content discovery.
 
 ## Why
 
