@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/*
+ * OpenRefs — "Lush Forest".
+ *
+ * Class-strategy dark mode. The `.dark` class is set on <html> by the inline
+ * script in index.html before first paint, then maintained by lib/theme.tsx.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Raw tokens. These live outside @theme so they can be redefined under .dark;
+ * the @theme inline block below is what turns them into utilities.
+ *
+ * Brand (docs/ARCHITECTURE.md):
+ *   #2E6F40 primary · #68BA7F primary-soft · #CFFFDC tint · #253D2C ink
+ * Neutrals are a gray ramp with a slight green cast so surfaces sit under the
+ * brand rather than beside it.
+ */
+:root {
+  color-scheme: light;
+
+  --brand-primary: #2e6f40;
+  --brand-primary-soft: #68ba7f;
+  --brand-tint: #cfffdc;
+  --brand-ink: #253d2c;
+
+  --background: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: #f5f8f6;
+  --border: #dfe7e1;
+
+  --foreground: #253d2c;
+  --muted-foreground: #5a6d61; /* 5.5:1 on --background */
+
+  --primary: #2e6f40; /* 6.1:1 on --background */
+  --primary-foreground: #ffffff;
+  --primary-hover: #255a34;
+  --accent: #68ba7f;
+  --tint: #cfffdc;
+  --tint-foreground: #1c3122;
+
+  --ring: #2e6f40;
+
+  /* Recharts series. Ordered for categorical use, not a gradient. */
+  --chart-1: #2e6f40;
+  --chart-2: #68ba7f;
+  --chart-3: #1c5f7a;
+  --chart-4: #b8862b;
+  --chart-5: #8a4f7d;
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --background: #101913;
+  --surface: #16211b;
+  --surface-muted: #1c2a22;
+  --border: #2a3a31;
+
+  --foreground: #e8f1ea; /* 14.4:1 on --surface */
+  --muted-foreground: #9bb0a3; /* 7.2:1 on --surface */
+
+  /* The soft green carries on dark; the deep primary would not clear AA. */
+  --primary: #68ba7f; /* 7.0:1 on --surface */
+  --primary-foreground: #0e1712;
+  --primary-hover: #7fc994;
+  --accent: #68ba7f;
+  --tint: #1e3226;
+  --tint-foreground: #cfffdc;
+
+  --ring: #68ba7f;
+
+  --chart-1: #68ba7f;
+  --chart-2: #2e6f40;
+  --chart-3: #5aa9c9;
+  --chart-4: #d9ab55;
+  --chart-5: #c08bb5;
+}
+
+/*
+ * `inline` matters here: it makes utilities resolve var(--background) on the
+ * consuming element instead of freezing it at :root, so the palette still
+ * flips if `.dark` ever moves off <html>.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent: var(--accent);
+  --color-tint: var(--tint);
+  --color-tint-foreground: var(--tint-foreground);
+
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-app: var(--radius);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    margin: 0;
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
