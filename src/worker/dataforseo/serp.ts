@@ -22,9 +22,11 @@ import { z } from "zod";
 import { ApiException } from "../http";
 import type { DataForSeoClient, DataForSeoTask } from "./client";
 import {
+  DFS_RESULTS_EXPIRED_STATUS,
   DFS_TASK_CREATED_STATUS,
   DFS_TASK_HANDED_STATUS,
   DFS_TASK_IN_QUEUE_STATUS,
+  DFS_TASK_NOT_FOUND_STATUS,
 } from "./client";
 import type { WrappedMeta } from "./schema";
 import { nullableNumber, nullableString } from "./schema";
@@ -208,14 +210,6 @@ export const RANK_TASK_PRICE_SOURCE =
 /** What one keyword's check costs at `RANK_TRACKING_DEPTH`. */
 export const RANK_TASK_PRICE_USD =
   SERP_TASK_PRICE_PER_10_RESULTS_USD * (RANK_TRACKING_DEPTH / 10);
-
-/**
- * "Task Not Found." and "Results Expired." — the two outcomes that will never
- * become a result no matter how long the collector waits, so they are dropped
- * rather than retried.
- */
-export const DFS_TASK_NOT_FOUND_STATUS = 40401;
-export const DFS_RESULTS_EXPIRED_STATUS = 40403;
 
 const taskRequestSchema = z.object({
   keyword: z.string().trim().min(1).max(700),

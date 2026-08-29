@@ -1,9 +1,11 @@
 import type { Hono } from "hono";
 
 import type { AppEnv } from "../types";
+import audits from "./audits";
 import auth from "./auth";
 import backlinks from "./backlinks";
 import collections from "./collections";
+import dashboard from "./dashboard";
 import dev from "./dev";
 import domains from "./domains";
 import gap from "./gap";
@@ -39,6 +41,11 @@ export const routeModules: RouteModule[] = [
   { path: "/gap", router: gap },
   { path: "/collections", router: collections },
   { path: "/projects", router: projects },
+  // Audits are reached two ways: `/projects/:id/audits` (list + create), which
+  // the projects router mounts as a sub-router, and `/audits/:auditId` for one
+  // audit, mounted here. Both live in routes/audits.ts.
+  { path: "/audits", router: audits },
+  { path: "/dashboard", router: dashboard },
   { path: "/meta", router: meta },
   // Every route in this module 404s unless APP_ENV === "development".
   { path: "/dev", router: dev },

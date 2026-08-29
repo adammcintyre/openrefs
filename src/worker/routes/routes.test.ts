@@ -27,6 +27,8 @@ const MOUNT_PROBES: Record<string, string> = {
   "/gap": "/gap/keywords",
   "/collections": "/collections",
   "/projects": "/projects",
+  "/audits": "/audits/abc",
+  "/dashboard": "/dashboard",
   "/meta": "/meta/locations",
   "/dev": "/dev/dfs-smoke",
 };
@@ -132,6 +134,15 @@ describe("session guard", () => {
     ["POST", "/projects/abc/keywords"],
     ["DELETE", "/projects/abc/keywords"],
     ["POST", "/projects/abc/keywords/check-now"],
+    // Phase 4. Creating an audit buys a crawl, and every read is tenant data —
+    // including the R2-hydrated drill-down, which must never answer a caller
+    // who has not proved workspace membership.
+    ["GET", "/projects/abc/audits"],
+    ["POST", "/projects/abc/audits"],
+    ["GET", "/audits/abc"],
+    ["GET", "/audits/abc/issues/titles"],
+    ["DELETE", "/audits/abc"],
+    ["GET", "/dashboard"],
     // Free and non-tenant, but still not public.
     ["GET", "/meta/locations"],
     ["GET", "/meta/languages"],

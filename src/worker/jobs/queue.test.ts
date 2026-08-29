@@ -1,3 +1,4 @@
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,6 +7,10 @@ import {
   DAILY_SEED_HOUR_UTC,
   isExhausted,
   JOB_MAX_ATTEMPTS,
+  JOB_RETENTION_DONE_MS,
+  JOB_RETENTION_FAILED_MS,
+  jobPrunePredicate,
+  jobRetentionCutoffs,
   nextDailySeedAt,
   nextRunAfterFailure,
 } from "./queue";
@@ -127,5 +132,66 @@ describe("chunk", () => {
   it("clamps a non-positive size rather than looping forever", () => {
     expect(chunk([1, 2, 3], 0)).toEqual([[1], [2], [3]]);
     expect(chunk([1, 2], -5)).toEqual([[1], [2]]);
+  });
+});
+
+/*
+ * Retention. The cutoffs are pure arithmetic and tested as such; the predicate
+ * is rendered to SQL and asserted on, because the property that matters most —
+ * "this can never match a pending or running row" — is a property of the
+ * statement, not of a number. A prune that deleted queued work would be silent
+ * and unrecoverable, so it is pinned here rather than trusted to review.
+ */
+describe("jobRetentionCutoffs", () => {
+  const now = new Date("2026-08-29T12:00:00.000Z");
+
+  it("keeps done jobs for seven days", () => {
+    expect(jobRetentionCutoffs(now).done.toISOString()).toBe(
+      "2026-08-22T12:00:00.000Z",
+    );
+    expect(JOB_RETENTION_DONE_MS).toBe(7 * 24 * 60 * 60_000);
+  });
+
+  it("keeps failed jobs for thirty days — the error outlives the success", () => {
+    expect(jobRetentionCutoffs(now).failed.toISOString()).toBe(
+      "2026-07-30T12:00:00.000Z",
+    );
+    expect(JOB_RETENTION_FAILED_MS).toBe(30 * 24 * 60 * 60_000);
+  });
+
+  it("keeps a failure far longer than a success", () => {
+    const { done, failed } = jobRetentionCutoffs(now);
+    expect(failed.getTime()).toBeLessThan(done.getTime());
+  });
+});
+
+describe("jobPrunePredicate", () => {
+  const now = new Date("2026-08-29T12:00:00.000Z");
+  const dialect = new SQLiteSyncDialect();
+  const rendered = dialect.sqlToQuery(jobPrunePredicate(now));
+
+  it("matches only finished rows — never pending or running work", () => {
+    // The whole point of bounding the prune to two statuses. If this fails,
+    // the retention pass has become a queue-eraser.
+    expect(rendered.sql).toContain("status");
+    expect(rendered.params).toContain("done");
+    expect(rendered.params).toContain("failed");
+    expect(rendered.params).not.toContain("pending");
+    expect(rendered.params).not.toContain("running");
+  });
+
+  it("gives each status its own cutoff, bound as parameters", () => {
+    const cutoffs = jobRetentionCutoffs(now);
+    // Timestamps are stored as epoch ms (`timestamp_ms` mode), so that is what
+    // the driver must be handed — a Date here would compare as text.
+    expect(rendered.params).toContain(cutoffs.done.getTime());
+    expect(rendered.params).toContain(cutoffs.failed.getTime());
+  });
+
+  it("compares run_at, not created_at", () => {
+    // run_at is "when the sweep last touched it" and is the indexed column;
+    // created_at would prune a long-queued job by its enqueue time instead.
+    expect(rendered.sql).toContain("run_at");
+    expect(rendered.sql).not.toContain("created_at");
   });
 });
