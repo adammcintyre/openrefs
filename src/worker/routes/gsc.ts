@@ -126,15 +126,17 @@ const pagedReportQuerySchema = reportQuerySchema.extend({
 });
 
 /**
- * The callback's query string.
+ * The callback's query string. Every field is optional, and that is
+ * deliberate: this handler's job is to *land the browser somewhere sensible*,
+ * so a missing field has to become a redirect carrying a reason, never a 422
+ * with a JSON body the user is left staring at. The checks happen in the
+ * handler, in the order that produces the most useful message.
  *
- * `code` is optional because Google omits it on refusal — the response is
- * `?error=access_denied&state=…` instead. `state` is required in every case,
- * and nothing else in the query string is read.
+ * Nothing else in the query string is read.
  */
 const callbackQuerySchema = z.object({
   code: z.string().min(1).optional(),
-  state: z.string().min(1, "Missing state."),
+  state: z.string().min(1).optional(),
   error: z.string().optional(),
 });
 
@@ -219,6 +221,15 @@ gsc.get("/connect", async (c) => {
  * at raw text. The SPA reads `?error=` and renders the right message. The one
  * exception is an anonymous caller, which `requireSession` answers with 401
  * before any of this runs — there is no page to send them back to.
+ *
+ * **This route depends on the session cookie being `SameSite=Lax`** (see
+ * lib/sessions.ts). Google's redirect is a cross-site top-level GET
+ * navigation, which Lax permits cookies on and `Strict` does not. Tightening
+ * that cookie to `Strict` as a hardening measure would leave every Search
+ * Console connection attempt landing here signed-out, with a 401 the user
+ * cannot act on — so if it is ever tightened, this flow needs a different way
+ * to carry the session (and the `state` token is already the CSRF defence that
+ * `Strict` would be duplicating).
  */
 gsc.get("/callback", async (c) => {
   requireGscConfig(c.env);
@@ -228,10 +239,16 @@ gsc.get("/callback", async (c) => {
   const back = (params: Record<string, string>) =>
     c.redirect(appRedirect(c.req.url, params), 302);
 
-  // The user pressed Cancel. Google still returns the state; there is nothing
-  // to verify it against, and nothing went wrong.
+  // The user pressed Cancel. Checked before the state, because a refusal is
+  // not an error to investigate — Google's own `error` is the whole story, and
+  // `access_denied` is passed through by name so the SPA can stay quiet about
+  // it rather than showing a failure.
   if (error !== undefined) {
     return back({ error: error === "access_denied" ? "access_denied" : "gsc_error" });
+  }
+
+  if (state === undefined) {
+    return back({ error: "invalid_state" });
   }
 
   const verified = await verifyOAuthState(c.env.APP_MASTER_KEY, state);
