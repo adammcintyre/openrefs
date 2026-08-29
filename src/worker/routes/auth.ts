@@ -223,7 +223,12 @@ auth.delete("/me", requireSession, async (c) => {
   const doomed = await soleOwnedWorkspaceIds(db, userId);
   for (const workspaceId of doomed) {
     await deleteWorkspaceEverywhere(
-      { db, kv: c.env.CACHE, r2: c.env.BLOBS },
+      {
+        db,
+        kv: c.env.CACHE,
+        r2: c.env.BLOBS,
+        masterKey: c.env.APP_MASTER_KEY,
+      },
       workspaceId,
     );
   }

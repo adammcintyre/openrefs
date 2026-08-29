@@ -320,7 +320,7 @@ app.delete("/:id", async (c) => {
   }
 
   const purged = await deleteWorkspaceEverywhere(
-    { db, kv: c.env.CACHE, r2: c.env.BLOBS },
+    { db, kv: c.env.CACHE, r2: c.env.BLOBS, masterKey: c.env.APP_MASTER_KEY },
     id,
   );
   return c.json({ deleted: true, purged });

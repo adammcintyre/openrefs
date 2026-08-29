@@ -102,6 +102,30 @@ export interface GscStatusResponse {
   broken: boolean;
 }
 
+/**
+ * `?error=` values the OAuth callback can redirect back to the SPA with.
+ *
+ * The callback is a browser navigation, not an XHR, so it cannot answer with a
+ * JSON error body — it has to hand the reason to the page it lands on. These
+ * are the flow-specific ones; the callback may also pass through an
+ * `ApiErrorCode` (`gsc_error`, `gsc_reconnect_required`, `forbidden`,
+ * `not_found`) when the failure happened after the state checked out.
+ */
+export const GSC_CALLBACK_ERRORS = [
+  /** The user pressed Cancel on Google's consent screen. Not an error to shout about. */
+  "access_denied",
+  /** The state token was missing, malformed, or not signed by this deployment. */
+  "invalid_state",
+  /** The state token was authentic but older than ten minutes. */
+  "expired_state",
+  /** A different user finished a flow this user started. */
+  "state_mismatch",
+  /** Google completed the exchange but issued no refresh token. */
+  "no_refresh_token",
+] as const;
+
+export type GscCallbackError = (typeof GSC_CALLBACK_ERRORS)[number];
+
 /** One property the connected Google account can see. */
 export interface GscSite {
   /** e.g. `sc-domain:example.com` or `https://example.com/`. */

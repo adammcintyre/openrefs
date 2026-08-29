@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "../../db";
+import { revokeWorkspaceGoogleTokens } from "../gsc/tokens";
 import {
   deleteWorkspaceEverywhere,
   purgeWorkspaceKv,
@@ -8,6 +9,28 @@ import {
   workspaceKvPrefix,
   workspaceR2Prefix,
 } from "./deletion";
+
+/**
+ * The Google revocation sweep is stubbed here so this file can test the
+ * *cascade's* contract — that revocation happens, before the row goes, and
+ * that it cannot stop the deletion. The sweep's own behaviour against a
+ * failing Google is tested in src/worker/gsc/tokens.test.ts.
+ */
+vi.mock("../gsc/tokens", () => ({
+  revokeWorkspaceGoogleTokens: vi.fn(async () => ({
+    attempted: 0,
+    revoked: 0,
+  })),
+}));
+
+const mockRevoke = vi.mocked(revokeWorkspaceGoogleTokens);
+
+beforeEach(() => {
+  mockRevoke.mockReset();
+  mockRevoke.mockResolvedValue({ attempted: 0, revoked: 0 });
+});
+
+const MASTER_KEY = "a".repeat(64);
 
 const WS = "11111111-2222-3333-4444-555555555555";
 const OTHER = "99999999-8888-7777-6666-555555555555";
@@ -166,35 +189,155 @@ describe("purgeWorkspaceR2", () => {
 });
 
 describe("deleteWorkspaceEverywhere", () => {
-  it("empties blob stores before dropping the D1 row", async () => {
-    const kv = new FakeKv();
-    const r2 = new FakeR2();
-    seed(kv.store, workspaceKvPrefix(WS), 3);
-    seed(r2.store, workspaceR2Prefix(WS), 2);
-
-    const order: string[] = [];
-    const originalKvDelete = kv.delete.bind(kv);
-    kv.delete = async (key: string) => {
-      order.push("kv");
-      await originalKvDelete(key);
-    };
-
-    const db = {
+  /** A db whose only job is to record when the workspace row was dropped. */
+  function trackingDb(order: string[]): Db {
+    return {
       delete: () => ({
         where: async () => {
           order.push("d1");
         },
       }),
     } as unknown as Db;
+  }
 
-    const result = await deleteWorkspaceEverywhere({ db, kv: kv as unknown as KVNamespace, r2: r2 as unknown as R2Bucket }, WS);
+  function stores(order: string[]) {
+    const kv = new FakeKv();
+    const r2 = new FakeR2();
+    const originalKvDelete = kv.delete.bind(kv);
+    kv.delete = async (key: string) => {
+      order.push("kv");
+      await originalKvDelete(key);
+    };
+    return { kv, r2 };
+  }
 
-    expect(result).toEqual({ kvKeys: 3, r2Objects: 2 });
+  it("empties blob stores before dropping the D1 row", async () => {
+    const order: string[] = [];
+    const { kv, r2 } = stores(order);
+    seed(kv.store, workspaceKvPrefix(WS), 3);
+    seed(r2.store, workspaceR2Prefix(WS), 2);
+
+    const result = await deleteWorkspaceEverywhere(
+      {
+        db: trackingDb(order),
+        kv: kv as unknown as KVNamespace,
+        r2: r2 as unknown as R2Bucket,
+        masterKey: MASTER_KEY,
+      },
+      WS,
+    );
+
+    expect(result).toEqual({
+      kvKeys: 3,
+      r2Objects: 2,
+      googleGrants: { attempted: 0, revoked: 0 },
+    });
     // The D1 delete is last: a mid-purge failure must leave a retryable
     // workspace rather than blobs nobody can find.
     expect(order.at(-1)).toBe("d1");
     expect(order.filter((step) => step === "d1")).toHaveLength(1);
     expect(kv.store.size).toBe(0);
     expect(r2.store.size).toBe(0);
+  });
+
+  it("revokes Google tokens BEFORE the cascade drops the rows holding them", async () => {
+    // Ordering is the whole point: once the row is gone so is the encrypted
+    // refresh token, and the grant would live on in the user's Google account
+    // with nothing left able to revoke it.
+    const order: string[] = [];
+    const { kv, r2 } = stores(order);
+
+    mockRevoke.mockImplementation(async () => {
+      order.push("revoke");
+      return { attempted: 2, revoked: 2 };
+    });
+
+    await deleteWorkspaceEverywhere(
+      {
+        db: trackingDb(order),
+        kv: kv as unknown as KVNamespace,
+        r2: r2 as unknown as R2Bucket,
+        masterKey: MASTER_KEY,
+      },
+      WS,
+    );
+
+    expect(order.indexOf("revoke")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("revoke")).toBeLessThan(order.indexOf("d1"));
+  });
+
+  it("passes the master key through — the tokens are encrypted at rest", async () => {
+    const { kv, r2 } = stores([]);
+    await deleteWorkspaceEverywhere(
+      {
+        db: trackingDb([]),
+        kv: kv as unknown as KVNamespace,
+        r2: r2 as unknown as R2Bucket,
+        masterKey: MASTER_KEY,
+      },
+      WS,
+    );
+    expect(mockRevoke).toHaveBeenCalledWith(
+      expect.anything(),
+      MASTER_KEY,
+      WS,
+    );
+  });
+
+  it("reports what Google accepted", async () => {
+    const { kv, r2 } = stores([]);
+    mockRevoke.mockResolvedValue({ attempted: 3, revoked: 1 });
+
+    const result = await deleteWorkspaceEverywhere(
+      {
+        db: trackingDb([]),
+        kv: kv as unknown as KVNamespace,
+        r2: r2 as unknown as R2Bucket,
+        masterKey: MASTER_KEY,
+      },
+      WS,
+    );
+
+    // attempted > revoked is normal: revocation is per Google account, so
+    // several projects sharing one account are revoked by the first call.
+    expect(result.googleGrants).toEqual({ attempted: 3, revoked: 1 });
+  });
+
+  it("still deletes everything when revocation throws outright", async () => {
+    // The user asked for their data to be deleted. Google being unreachable —
+    // or any other third-party failure — must not be able to veto that.
+    const order: string[] = [];
+    const { kv, r2 } = stores(order);
+    seed(kv.store, workspaceKvPrefix(WS), 4);
+    seed(r2.store, workspaceR2Prefix(WS), 3);
+
+    mockRevoke.mockRejectedValue(new Error("google is down"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const result = await deleteWorkspaceEverywhere(
+      {
+        db: trackingDb(order),
+        kv: kv as unknown as KVNamespace,
+        r2: r2 as unknown as R2Bucket,
+        masterKey: MASTER_KEY,
+      },
+      WS,
+    );
+
+    expect(result).toEqual({
+      kvKeys: 4,
+      r2Objects: 3,
+      googleGrants: { attempted: 0, revoked: 0 },
+    });
+    // The row went, the blobs went, and the failure was logged rather than
+    // thrown.
+    expect(order).toContain("d1");
+    expect(kv.store.size).toBe(0);
+    expect(r2.store.size).toBe(0);
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
   });
 });
