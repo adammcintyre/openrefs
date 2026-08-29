@@ -7,7 +7,7 @@
  * bindings, is what lets the retry schedule and the daily seed time be tested
  * without a database.
  */
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, ne, or, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../../db";
 import { jobs } from "../../db";
@@ -16,7 +16,12 @@ import { jobs } from "../../db";
  * Every job type the registry knows. Adding one means adding a file named for
  * it under src/worker/jobs/ and an entry in the registry — see jobs/index.ts.
  */
-export const JOB_TYPES = ["seed_daily", "rank_post", "rank_collect"] as const;
+export const JOB_TYPES = [
+  "seed_daily",
+  "rank_post",
+  "rank_collect",
+  "audit_poll",
+] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 /**
@@ -113,6 +118,121 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
     out.push(items.slice(i, i + step));
   }
   return out;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Retention                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * `jobs` is a queue, not a history. Nothing reads a finished row — the sweep
+ * claims by `status IN ('pending','running')`, and the dev endpoint reports
+ * what a sweep just did — so without pruning the table grows forever, one row
+ * per keyword per night, until D1's storage limit becomes a self-hoster's
+ * problem. These two windows are the compromise between that and the one thing
+ * a finished row is genuinely good for: answering "what happened last night?"
+ */
+
+/**
+ * How long a `done` job is kept. A week covers "did last night's check run?"
+ * and every weekly-cadence question anyone asks of a job log; past that the row
+ * is landfill, because the work it describes is visible in `rank_snapshots`
+ * and `audits` instead.
+ */
+export const JOB_RETENTION_DONE_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * How long a `failed` job is kept — deliberately far longer than a success.
+ *
+ * A failure carries `last_error`, which is the only surviving record of *why*
+ * something did not happen, and failures are noticed late (a chart with a hole
+ * in it is what prompts the look). Thirty days means a monthly review still
+ * finds the evidence.
+ */
+export const JOB_RETENTION_FAILED_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * Rows one prune may delete.
+ *
+ * The prune shares its tick with real work, so it is bounded for the same
+ * reason `SWEEP_BATCH_SIZE` is: a deployment coming back from a month of
+ * downtime must not turn the first cron into one enormous statement. Anything
+ * over the bound simply goes on the next tick, five minutes later — and since
+ * the backlog only shrinks, the table converges.
+ */
+export const JOB_PRUNE_LIMIT = 200;
+
+export interface JobRetentionCutoffs {
+  /** `done` rows last touched before this are prunable. */
+  done: Date;
+  /** `failed` rows last touched before this are prunable. */
+  failed: Date;
+}
+
+/**
+ * The two cutoff instants, as pure arithmetic so the policy can be tested
+ * without a database.
+ */
+export function jobRetentionCutoffs(now: Date): JobRetentionCutoffs {
+  return {
+    done: new Date(now.getTime() - JOB_RETENTION_DONE_MS),
+    failed: new Date(now.getTime() - JOB_RETENTION_FAILED_MS),
+  };
+}
+
+/**
+ * Which rows a prune at `now` may delete.
+ *
+ * Split out so the test can render it to SQL and assert on the policy itself —
+ * that only `done` and `failed` appear, and that each gets its own cutoff.
+ * A bug that let this match `pending` would silently delete queued work, which
+ * is the failure this predicate is most worth pinning against.
+ *
+ * **`run_at`, not `created_at`.** For a finished job `run_at` is when the sweep
+ * last touched it (the claim pushes it out by one `JOB_LEASE_MS`), so it means
+ * "finished around then" — which is what retention is actually about — whereas
+ * `created_at` means "enqueued then" and would prune a long-queued job early.
+ * It is also the indexed column: `jobs_status_run_at_idx` is `(status, run_at)`,
+ * exactly this predicate's shape. The 15-minute lease skew is immaterial
+ * against a 7-day window.
+ */
+export function jobPrunePredicate(now: Date): SQL {
+  const cutoff = jobRetentionCutoffs(now);
+  const predicate = or(
+    and(eq(jobs.status, "done"), lt(jobs.runAt, cutoff.done)),
+    and(eq(jobs.status, "failed"), lt(jobs.runAt, cutoff.failed)),
+  );
+  // `or()` is only undefined for an empty argument list; both arms are static.
+  if (predicate === undefined) {
+    throw new Error("jobPrunePredicate built an empty predicate.");
+  }
+  return predicate;
+}
+
+/**
+ * Deletes up to `JOB_PRUNE_LIMIT` expired rows in **one** statement.
+ *
+ * `DELETE ... WHERE id IN (SELECT id ... LIMIT n)` rather than `DELETE ...
+ * LIMIT n`, because `DELETE`'s own `LIMIT` is a compile-time SQLite option that
+ * D1 does not guarantee. The subquery form is portable and bounds the statement
+ * just as well.
+ *
+ * Returns how many rows went, for the sweep log.
+ */
+export async function pruneJobs(db: Db, now: Date): Promise<number> {
+  const expired = db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(jobPrunePredicate(now))
+    .orderBy(jobs.runAt)
+    .limit(JOB_PRUNE_LIMIT);
+
+  const deleted = await db
+    .delete(jobs)
+    .where(inArray(jobs.id, expired))
+    .returning({ id: jobs.id });
+
+  return deleted.length;
 }
 
 /* -------------------------------------------------------------------------- */

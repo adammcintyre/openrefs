@@ -13,6 +13,7 @@ import {
   isExhausted,
   JOB_LEASE_MS,
   nextRunAfterFailure,
+  pruneJobs,
   SWEEP_BATCH_SIZE,
 } from "./jobs";
 import type { JobRecord } from "./jobs";
@@ -38,6 +39,8 @@ export interface SweepResult {
   retried: number;
   /** Out of attempts. Will not run again without intervention. */
   failed: number;
+  /** Expired finished rows deleted by this tick's retention pass. */
+  pruned: number;
   entries: SweepEntry[];
 }
 
@@ -88,7 +91,27 @@ export async function sweepJobs(env: Env): Promise<SweepResult> {
     else failed += 1;
   }
 
-  return { claimed: claimed.length, succeeded, retried, failed, entries };
+  /*
+   * Retention runs last, and deliberately after the handlers rather than
+   * before: a job this very tick moved to `done` is far newer than any cutoff,
+   * so ordering cannot affect what is deleted — but running last means a prune
+   * that throws (a locked table, say) cannot cost us the work the tick already
+   * did, because that work is already committed.
+   *
+   * It is not wrapped in a try/catch for the same reason nothing else here is:
+   * a failing prune is a real fault and should surface in the cron log rather
+   * than accumulate silently for months.
+   */
+  const pruned = await pruneJobs(db, now);
+
+  return {
+    claimed: claimed.length,
+    succeeded,
+    retried,
+    failed,
+    pruned,
+    entries,
+  };
 }
 
 /**
