@@ -210,3 +210,89 @@ export async function decryptSecret(
   );
   return td.decode(pt);
 }
+
+/* ---------------- keyed MACs derived from the master key ------------------- */
+
+/**
+ * An HMAC-SHA256 key derived from `APP_MASTER_KEY` for one named purpose.
+ *
+ * **Why derive rather than use the master key directly.** `APP_MASTER_KEY` is
+ * already the AES-256-GCM key that encrypts every secret at rest. Using the
+ * same 32 bytes as an HMAC key would mean one key doing two cryptographic jobs
+ * — an attacker with a signing oracle would be probing the same material that
+ * protects the DataForSEO and Google credentials. HKDF gives each purpose an
+ * independent key that reveals nothing about the master or about its siblings.
+ *
+ * The derivation is HKDF-SHA256 (RFC 5869) over the raw 32 master bytes, with
+ * an **empty salt** and the purpose string as `info`. An empty salt is the
+ * RFC's documented default and is safe here because the input keying material
+ * is already a uniformly random 256-bit key rather than a low-entropy
+ * password; `info` is what separates the purposes, so two callers passing
+ * different `info` can never derive the same key.
+ *
+ * `info` is part of the derivation, so changing a purpose string invalidates
+ * every token signed under the old one. Version them (`...:v1`) and treat a
+ * change as a rotation.
+ */
+export async function deriveHmacKey(
+  masterKeyHex: string,
+  info: string,
+): Promise<CryptoKey> {
+  const raw = hexToBytes(masterKeyHex);
+  if (raw.length !== 32) {
+    throw new Error("APP_MASTER_KEY must be 32 bytes of hex (64 characters)");
+  }
+  const ikm = await crypto.subtle.importKey(
+    "raw",
+    raw as BufferSource,
+    "HKDF",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new Uint8Array(0) as BufferSource,
+      info: te.encode(info) as BufferSource,
+    },
+    ikm,
+    256,
+  );
+  return crypto.subtle.importKey("raw", bits, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+}
+
+/** Raw HMAC-SHA256 tag over `message`, using a key from `deriveHmacKey`. */
+export async function hmacSha256(
+  key: CryptoKey,
+  message: string,
+): Promise<Uint8Array> {
+  const sig = await crypto.subtle.sign("HMAC", key, te.encode(message));
+  return new Uint8Array(sig);
+}
+
+/* ------------------------------ base64url --------------------------------- */
+
+/**
+ * base64url (RFC 4648 §5) — the alphabet URLs and OAuth `state` need, since
+ * standard base64's `+`, `/` and `=` all have to be percent-encoded otherwise.
+ */
+export function bytesToBase64Url(bytes: Uint8Array): string {
+  return bytesToBase64(bytes)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+}
+
+/** Inverse of `bytesToBase64Url`. Throws on characters outside the alphabet. */
+export function base64UrlToBytes(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(value)) {
+    throw new Error("not base64url");
+  }
+  const b64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  // atob wants the padding back; the length mod 4 says how much was stripped.
+  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+  return base64ToBytes(b64 + pad);
+}

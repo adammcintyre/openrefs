@@ -45,6 +45,31 @@ export const ERROR_STATUS = {
   too_many_attempts: 429,
   /** Invite token is unknown, already redeemed, or past `expires_at`. */
   invite_invalid: 410,
+
+  /* Search Console (Phase 5). */
+  /**
+   * No `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` on this deployment, so the
+   * OAuth flow cannot start. A 409 rather than a 501: the feature exists and
+   * the operator can enable it, which is exactly what the UI tells them.
+   * `GET /gsc/status` answers `configured: false` instead of erroring, so the
+   * SPA can render setup guidance without provoking this.
+   */
+  gsc_not_configured: 409,
+  /** This project has no `gsc_connections` row — nobody has connected it yet. */
+  gsc_not_connected: 409,
+  /** Connected, but no Search Console property picked yet (property is ""). */
+  gsc_no_property: 409,
+  /**
+   * Google refused our refresh token (`invalid_grant`): the user revoked
+   * access, changed their password, or the grant expired. Not retryable and
+   * not our bug — the only fix is reconnecting, so the UI shows that CTA.
+   */
+  gsc_reconnect_required: 409,
+  /**
+   * Google's API failed in a way that is neither a config problem nor a dead
+   * grant. Their `error.message` is forwarded; nothing of ours is echoed back.
+   */
+  gsc_error: 502,
 } as const;
 
 export type ApiErrorCode = keyof typeof ERROR_STATUS;
