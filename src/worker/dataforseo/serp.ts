@@ -20,7 +20,12 @@
 import { z } from "zod";
 
 import { ApiException } from "../http";
-import type { DataForSeoClient } from "./client";
+import type { DataForSeoClient, DataForSeoTask } from "./client";
+import {
+  DFS_TASK_CREATED_STATUS,
+  DFS_TASK_HANDED_STATUS,
+  DFS_TASK_IN_QUEUE_STATUS,
+} from "./client";
 import type { WrappedMeta } from "./schema";
 import { nullableNumber, nullableString } from "./schema";
 
@@ -113,10 +118,182 @@ export interface OrganicSerpResult extends WrappedMeta {
   items: OrganicSerpItem[];
 }
 
+/* -------------------------------------------------------------------------- */
+/* Standard-queue task flow (rank tracking)                                    */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Rank tracking does NOT use the live endpoint above. Checking 100 keywords a
+ * day live would cost $2 a day per project; the standard task queue is the
+ * same SERP for a tenth of that, at the price of asking for it now and
+ * collecting it a few minutes later. Everything below implements that trade.
+ *
+ * Verified against https://docs.dataforseo.com/v3/serp/google/organic/
+ * task_post/, .../tasks_ready/ and .../task_get/advanced/ (2026-08-29). Four
+ * things here are counter-intuitive enough to be worth stating plainly:
+ *
+ *  1. A successful `task_post` reports **20100**, not 20000, on each task.
+ *     Only the envelope says 20000.
+ *  2. `task_post` returns `result: null` — the task **id** on the task
+ *     envelope is the entire payload, which is why the client had to start
+ *     exposing `tasks[]`.
+ *  3. `task_get/**regular**` returns only `organic`, `paid` and
+ *     `featured_snippet` item types, so its `item_types` is NOT the SERP
+ *     feature list. Snapshots record SERP features, so this uses **advanced**.
+ *     Both are free; the spec's "task_get/regular" predates that detail.
+ *  4. Collecting is free ("you can get the results of the task within the next
+ *     30 days for free") and so is `tasks_ready`. Only the post is billed,
+ *     which is why the spend cap gates posting and must not gate collection.
+ */
+
+export const GOOGLE_ORGANIC_TASK_POST = "serp/google/organic/task_post";
+export const GOOGLE_ORGANIC_TASKS_READY = "serp/google/organic/tasks_ready";
+
+/**
+ * The family label `task_get` calls are metered under.
+ *
+ * Without it every task id becomes its own `api_usage.endpoint` value and the
+ * usage report's by-endpoint grouping degenerates into one row per SERP.
+ */
+export const GOOGLE_ORGANIC_TASK_GET = "serp/google/organic/task_get/advanced";
+
+/** `task_get/advanced/<id>`. See note 3 above for why not `regular`. */
+export function googleOrganicTaskGetEndpoint(taskId: string): string {
+  return `${GOOGLE_ORGANIC_TASK_GET}/${encodeURIComponent(taskId)}`;
+}
+
+/**
+ * Documented ceiling on one `task_post` call: "each POST call containing no
+ * more than 100 tasks", enforced upstream as error 40006.
+ */
+export const SERP_TASK_POST_MAX_TASKS = 100;
+
+/** Longest `tag` DataForSEO accepts. Ours is a tracked-keyword uuid (36). */
+export const SERP_TAG_MAX_LENGTH = 255;
+
+/**
+ * Depth for a rank check: the top 100 organic results.
+ *
+ * This is the number that defines what a `null` position *means* in
+ * `rank_snapshots` — "not in the top 100" — so changing it changes the data's
+ * meaning, not just its price.
+ */
+export const RANK_TRACKING_DEPTH = 100;
+
+/**
+ * Base price of one standard-queue Google Organic SERP, USD, covering **10
+ * results**. Depth multiplies it: "Multiply for each 10 search engine
+ * results."
+ */
+export const SERP_TASK_PRICE_PER_10_RESULTS_USD = 0.0006;
+
+/**
+ * Where the price came from, so the next person can re-check it rather than
+ * trust a constant.
+ *
+ * https://dataforseo.com/pricing/google-serp/google-organic-serp-api —
+ * standard queue $0.0006/SERP, priority queue $0.0012, live $0.002, each
+ * covering 10 results and multiplied per extra 10.
+ *
+ * **This changed on 2025-09-19.** The base price used to cover ~100 results;
+ * it now covers 10, so depth 100 costs 10× the headline figure. DataForSEO's
+ * older /apis/serp-api/pricing page still carries the pre-2025 wording and is
+ * stale. Their own worked example for the current model:
+ * "Standard method, Normal priority queue: $0.0006 х 10 = $0.006"
+ * (https://dataforseo.com/help-center/serp-api-pricing-depth-update-faq).
+ */
+export const RANK_TASK_PRICE_SOURCE =
+  "https://dataforseo.com/pricing/google-serp/google-organic-serp-api";
+
+/** What one keyword's check costs at `RANK_TRACKING_DEPTH`. */
+export const RANK_TASK_PRICE_USD =
+  SERP_TASK_PRICE_PER_10_RESULTS_USD * (RANK_TRACKING_DEPTH / 10);
+
+/**
+ * "Task Not Found." and "Results Expired." — the two outcomes that will never
+ * become a result no matter how long the collector waits, so they are dropped
+ * rather than retried.
+ */
+export const DFS_TASK_NOT_FOUND_STATUS = 40401;
+export const DFS_RESULTS_EXPIRED_STATUS = 40403;
+
+const taskRequestSchema = z.object({
+  keyword: z.string().trim().min(1).max(700),
+  locationCode: z.number().int().positive(),
+  languageCode: z.string().trim().min(2).max(8),
+  device: z.enum(SERP_DEVICES).optional(),
+  /** Our correlation handle. See `SERP_TAG_MAX_LENGTH`. */
+  tag: z.string().trim().min(1).max(SERP_TAG_MAX_LENGTH),
+});
+
+export type OrganicTaskRequest = z.input<typeof taskRequestSchema>;
+
+/** One task DataForSEO accepted and is now working on. */
+export interface PostedTask {
+  /** Opaque. UUID-shaped but not a UUID — never validate it as one. */
+  id: string;
+  /**
+   * Position in the submitted batch. The fallback correlation handle for the
+   * rare accepted task whose `tag` echo is missing — `tasks[]` comes back in
+   * submission order, so the index still identifies the keyword.
+   */
+  index: number;
+  /** Echoed from `data.tag`; null if the echo was missing. */
+  tag: string | null;
+  costUsd: number;
+}
+
+/** One task DataForSEO refused, kept so the caller can say which keyword. */
+export interface RejectedTask {
+  /** Position in the submitted batch — the only handle a refusal carries. */
+  index: number;
+  statusCode: number;
+  statusMessage: string;
+}
+
+export interface TaskPostResult extends WrappedMeta {
+  accepted: PostedTask[];
+  rejected: RejectedTask[];
+}
+
+/** One entry of `tasks_ready`. */
+export interface ReadyTask {
+  id: string;
+  tag: string | null;
+  /** DataForSEO's `date_posted`, their format: "2019-11-08 13:54:43 +00:00". */
+  datePosted: string | null;
+}
+
+export interface TasksReadyResult extends WrappedMeta {
+  tasks: ReadyTask[];
+}
+
+/**
+ * The three states a `task_get` can be in. Modelled explicitly because
+ * "pending" is the normal case for the first few minutes and is emphatically
+ * not an error.
+ */
+export type TaskGetOutcome =
+  | { state: "ready"; tag: string | null; serp: OrganicSerpResult }
+  | { state: "pending"; statusCode: number; statusMessage: string }
+  | { state: "gone"; statusCode: number; statusMessage: string };
+
 export interface SerpApi {
   googleOrganicLiveAdvanced(
     params: OrganicSerpParams,
   ): Promise<OrganicSerpResult>;
+  /**
+   * Posts up to `SERP_TASK_POST_MAX_TASKS` tasks in one billed call. Rejects
+   * larger batches rather than silently truncating — losing keywords quietly
+   * is how a rank chart grows a hole nobody notices.
+   */
+  googleOrganicTaskPost(
+    tasks: readonly OrganicTaskRequest[],
+  ): Promise<TaskPostResult>;
+  /** Free. Which of this account's tasks have finished. */
+  googleOrganicTasksReady(): Promise<TasksReadyResult>;
+  /** Free. The finished SERP, or why it is not finished. */
+  googleOrganicTaskGet(taskId: string): Promise<TaskGetOutcome>;
 }
 
 export function createSerpApi(client: DataForSeoClient): SerpApi {
@@ -150,26 +327,212 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         fresh,
       });
 
-      const result = serpResultSchema.safeParse(response.results[0]);
-      if (!result.success) {
+      return toOrganicSerpResult(
+        GOOGLE_ORGANIC_LIVE_ADVANCED,
+        response.results[0],
+        { costUsd: response.costUsd, cached: response.cached },
+      );
+    },
+
+    async googleOrganicTaskPost(tasks) {
+      if (tasks.length === 0 || tasks.length > SERP_TASK_POST_MAX_TASKS) {
         throw new ApiException(
-          "upstream_error",
-          `DataForSEO ${GOOGLE_ORGANIC_LIVE_ADVANCED} returned an unrecognised result shape.`,
+          "validation_failed",
+          `A SERP task_post carries 1–${SERP_TASK_POST_MAX_TASKS} tasks; got ${tasks.length}.`,
         );
       }
-      const data = result.data;
+
+      const payload = tasks.map((task, index) => {
+        const parsed = taskRequestSchema.safeParse(task);
+        if (!parsed.success) {
+          throw new ApiException(
+            "validation_failed",
+            `Invalid SERP task at index ${index}.`,
+            z.flattenError(parsed.error),
+          );
+        }
+        const { keyword, locationCode, languageCode, device, tag } = parsed.data;
+        return {
+          keyword: keyword.toLowerCase(),
+          location_code: locationCode,
+          language_code: languageCode,
+          device: device ?? "desktop",
+          depth: RANK_TRACKING_DEPTH,
+          /*
+           * Explicit rather than defaulted. `priority: 1` is the standard
+           * queue — the whole reason this flow exists — and 2 costs exactly
+           * double, so leaving it implicit puts a 2× price rise one upstream
+           * default-change away.
+           */
+          priority: 1,
+          tag,
+        };
+      });
+
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_ORGANIC_TASK_POST,
+        payload,
+        // Task results live in D1, not KV, and a task id is a one-shot handle:
+        // re-serving a cached one would hand back a SERP we already collected.
+        ttl: "none",
+        // A created task reports 20100. Without this every success throws.
+        okTaskStatusCodes: [DFS_TASK_CREATED_STATUS],
+      });
+
+      const accepted: PostedTask[] = [];
+      const rejected: RejectedTask[] = [];
+
+      response.tasks.forEach((task, index) => {
+        if (task.id !== null && isCreated(task)) {
+          accepted.push({
+            id: task.id,
+            index,
+            tag: readTag(task),
+            costUsd: task.costUsd,
+          });
+          return;
+        }
+        // A per-task refusal (a bad location code, say) does not fail the
+        // batch: the other 99 keywords were posted and paid for.
+        rejected.push({
+          index,
+          statusCode: task.statusCode,
+          statusMessage: task.statusMessage,
+        });
+      });
 
       return {
-        keyword: data.keyword,
-        checkUrl: data.check_url,
-        fetchedAt: data.datetime,
-        serpFeatures: data.item_types,
-        totalResults: data.se_results_count,
-        items: pickOrganic(data.items),
+        accepted,
+        rejected,
         costUsd: response.costUsd,
         cached: response.cached,
       };
     },
+
+    async googleOrganicTasksReady() {
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_ORGANIC_TASKS_READY,
+        // GET, so nothing is sent.
+        payload: [],
+        method: "GET",
+        ttl: "none",
+        // Free, and exempt so a workspace at its cap can still collect SERPs
+        // it has already paid for.
+        spendCapExempt: true,
+      });
+
+      const tasks: ReadyTask[] = [];
+      for (const raw of response.results) {
+        const parsed = readyTaskSchema.safeParse(raw);
+        if (!parsed.success || parsed.data.id === null) continue;
+        tasks.push({
+          id: parsed.data.id,
+          tag: parsed.data.tag,
+          datePosted: parsed.data.date_posted,
+        });
+      }
+
+      return { tasks, costUsd: response.costUsd, cached: response.cached };
+    },
+
+    async googleOrganicTaskGet(taskId) {
+      const endpoint = googleOrganicTaskGetEndpoint(taskId);
+      const response = await client.request<unknown>({
+        endpoint,
+        payload: [],
+        method: "GET",
+        ttl: "none",
+        spendCapExempt: true,
+        // The id stays in the URL; the meter records the family.
+        meterAs: GOOGLE_ORGANIC_TASK_GET,
+        // "Task Handed" / "Task In Queue" are the normal answer while the
+        // standard queue works; they must not raise.
+        okTaskStatusCodes: [
+          DFS_TASK_HANDED_STATUS,
+          DFS_TASK_IN_QUEUE_STATUS,
+          DFS_TASK_NOT_FOUND_STATUS,
+          DFS_RESULTS_EXPIRED_STATUS,
+        ],
+      });
+
+      const task = response.tasks[0];
+      const statusCode = task?.statusCode ?? response.statusCode;
+      const statusMessage = task?.statusMessage ?? response.statusMessage;
+
+      if (
+        statusCode === DFS_TASK_HANDED_STATUS ||
+        statusCode === DFS_TASK_IN_QUEUE_STATUS
+      ) {
+        return { state: "pending", statusCode, statusMessage };
+      }
+      if (
+        statusCode === DFS_TASK_NOT_FOUND_STATUS ||
+        statusCode === DFS_RESULTS_EXPIRED_STATUS
+      ) {
+        // Nothing will ever come back for this id. Saying so lets the
+        // collector drop it instead of polling a ghost for 24 hours.
+        return { state: "gone", statusCode, statusMessage };
+      }
+
+      return {
+        state: "ready",
+        tag: task === undefined ? null : readTag(task),
+        serp: toOrganicSerpResult(endpoint, response.results[0], {
+          costUsd: response.costUsd,
+          cached: response.cached,
+        }),
+      };
+    },
+  };
+}
+
+const readyTaskSchema = z.object({
+  id: nullableString,
+  tag: nullableString,
+  date_posted: nullableString,
+});
+
+/** True for the one per-task status that means "accepted onto the queue". */
+function isCreated(task: DataForSeoTask): boolean {
+  return (
+    task.statusCode === DFS_TASK_CREATED_STATUS || task.statusCode === 20000
+  );
+}
+
+/** `data.tag`, when the echo is present and a string. */
+function readTag(task: DataForSeoTask): string | null {
+  const tag = task.data?.["tag"];
+  return typeof tag === "string" ? tag : null;
+}
+
+/**
+ * `result[0]` to our shape. Shared by the live endpoint and `task_get`: the
+ * advanced task result is documented with the same result fields, which is
+ * what lets one parser serve both and one snapshot writer trust either.
+ */
+function toOrganicSerpResult(
+  endpoint: string,
+  raw: unknown,
+  meta: WrappedMeta,
+): OrganicSerpResult {
+  const result = serpResultSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ApiException(
+      "upstream_error",
+      `DataForSEO ${endpoint} returned an unrecognised result shape.`,
+    );
+  }
+  const data = result.data;
+
+  return {
+    keyword: data.keyword,
+    checkUrl: data.check_url,
+    fetchedAt: data.datetime,
+    serpFeatures: data.item_types,
+    totalResults: data.se_results_count,
+    items: pickOrganic(data.items),
+    costUsd: meta.costUsd,
+    cached: meta.cached,
   };
 }
 

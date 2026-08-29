@@ -25,6 +25,8 @@ function fakeClient(result: unknown): {
       requests.push(req);
       return {
         results: [result as TResult],
+        // Labs endpoints are not task-based, so there is nothing here to keep.
+        tasks: [],
         costUsd: 0.01212,
         cached: false,
         statusCode: 20000,

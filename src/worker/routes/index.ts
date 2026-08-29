@@ -10,6 +10,7 @@ import gap from "./gap";
 import health from "./health";
 import keywords from "./keywords";
 import meta from "./meta";
+import projects from "./projects";
 import usage from "./usage";
 import workspaces from "./workspaces";
 
@@ -37,6 +38,7 @@ export const routeModules: RouteModule[] = [
   { path: "/backlinks", router: backlinks },
   { path: "/gap", router: gap },
   { path: "/collections", router: collections },
+  { path: "/projects", router: projects },
   { path: "/meta", router: meta },
   // Every route in this module 404s unless APP_ENV === "development".
   { path: "/dev", router: dev },
