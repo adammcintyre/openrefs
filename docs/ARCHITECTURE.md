@@ -77,6 +77,13 @@ Defined as CSS variables in `src/app/styles/theme.css`, consumed by Tailwind v4 
 
 Two modes: **ad-hoc research tools** (Keyword Research, Domain Overview, Backlinks, Gap Analysis, Content Discovery — query anything, no setup) and **Projects** (a site you own: Rank Tracking, Site Audit, Search Console, AI Visibility, named competitors). Left sidebar nav in that order, workspace switcher at top.
 
+## Orchestrator contracts (added after scaffold review)
+
+- **Crypto:** all hashing/encryption goes through `src/worker/lib/crypto.ts` (WebCrypto only, orchestrator-owned — do not add crypto code elsewhere). Password hashes: `pbkdf2$sha256$<iters>$<salt b64>$<hash b64>`. Encrypted secrets: `v1$<iv b64>$<ciphertext b64>` (supersedes the earlier `iv:ciphertext` note). Session / API-key / invite tokens: `randomToken()`, with only `sha256Hex(token)` ever stored.
+- **Spend cap:** `workspaces.spend_cap_usd` — `0` blocks every paid call; `> 0` is a calendar-month (UTC) ceiling on summed `api_usage.cost_usd`. Cached reads are always allowed. Exceeded → HTTP 402, code `spend_cap_exceeded`.
+- **Credential fallback:** workspace DataForSEO credentials come from D1 (encrypted). The `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD` env fallback applies **only when `APP_ENV=development`** — hosted tenants must never spend on the operator's key.
+- **Workspace scoping:** every workspace-scoped endpoint receives the workspace id explicitly (path param or `?workspace=`) and must verify the caller's membership against `workspace_members`. Never infer "the user's first workspace".
+
 ## Trademark rules
 
 See CLAUDE.md "Hard rules" — banned Ahrefs/Moz/Google marks and our replacement vocabulary. README may describe OpenRefs as "an open-source alternative to tools like Ahrefs" (nominative use) but never uses their logos or screenshots.

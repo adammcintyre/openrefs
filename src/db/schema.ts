@@ -92,8 +92,9 @@ export const workspaces = sqliteTable("workspaces", {
   id: id(),
   name: text("name").notNull(),
   /**
-   * DataForSEO credentials, AES-256-GCM encrypted with APP_MASTER_KEY and
-   * stored as `iv:ciphertext` base64. Never selected into an API response.
+   * DataForSEO credentials, AES-256-GCM encrypted with APP_MASTER_KEY in the
+   * `v1$iv$ciphertext` format from src/worker/lib/crypto.ts. Never selected
+   * into an API response.
    */
   dfsLoginEnc: text("dfs_login_enc"),
   dfsPasswordEnc: text("dfs_password_enc"),
