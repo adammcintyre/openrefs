@@ -21,15 +21,20 @@ export const ERROR_STATUS = {
   bad_request: 400,
   unauthorized: 401,
   payment_required: 402,
+  /** Workspace is over its monthly DataForSEO spend cap. */
+  spend_cap_exceeded: 402,
   forbidden: 403,
   not_found: 404,
   conflict: 409,
+  /** No DataForSEO credentials for this workspace, and no dev fallback. */
+  no_credentials: 409,
   validation_failed: 422,
-  spend_cap_exceeded: 429,
   rate_limited: 429,
   internal_error: 500,
   not_implemented: 501,
   upstream_error: 502,
+  /** DataForSEO did not answer inside the client's timeout. */
+  upstream_timeout: 504,
 } as const;
 
 export type ApiErrorCode = keyof typeof ERROR_STATUS;
