@@ -142,6 +142,16 @@ export interface DataForSeoRequest<TPayload = unknown> {
    */
   okTaskStatusCodes?: readonly number[];
   /**
+   * Endpoint label to record in `api_usage`, when the real path is not one.
+   *
+   * `task_get` puts the task id in the URL, so metering the path verbatim
+   * would write a distinct `endpoint` value per task — turning the usage
+   * report's by-endpoint grouping into thousands of one-row groups and hiding
+   * what was actually spent. The label is the family (`.../task_get/advanced`)
+   * and the id stays in the URL where it belongs.
+   */
+  meterAs?: string;
+  /**
    * Skip the spend-cap check for an endpoint DataForSEO bills at $0.
    *
    * The only sanctioned use is retrieving results that have **already been paid
@@ -551,7 +561,11 @@ export function createDataForSeoClient(
         cacheScope = "workspace",
         okTaskStatusCodes = [],
         spendCapExempt = false,
+        meterAs,
       } = req;
+      // The cache key still uses the real path — two task ids are two
+      // different requests — but `api_usage` gets the stable family label.
+      const meteredEndpoint = meterAs ?? endpoint;
       const cacheable = ttl !== "none";
       const global = cacheScope === "global";
 
@@ -569,7 +583,7 @@ export function createDataForSeoClient(
       if (cacheable && !fresh) {
         const hit = await env.CACHE.get<CacheEntry<TResult>>(cacheKey, "json");
         if (hit && hit.v === CACHE_ENTRY_VERSION) {
-          await meter(endpoint, 0, true);
+          await meter(meteredEndpoint, 0, true);
           return {
             results: hit.results,
             // Deliberately not cached: see `DataForSeoResponse.tasks`.
@@ -600,7 +614,7 @@ export function createDataForSeoClient(
       // 5. Meter the real cost *before* interpreting the status: a task that
       //    errors is still billed, and an unrecorded spend is how a cap leaks.
       const costUsd = toFiniteNumber(envelope.cost);
-      await meter(endpoint, costUsd, false);
+      await meter(meteredEndpoint, costUsd, false);
 
       assertOk(endpoint, envelope, okTaskStatusCodes);
 

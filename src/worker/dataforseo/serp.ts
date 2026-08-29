@@ -149,9 +149,17 @@ export interface OrganicSerpResult extends WrappedMeta {
 export const GOOGLE_ORGANIC_TASK_POST = "serp/google/organic/task_post";
 export const GOOGLE_ORGANIC_TASKS_READY = "serp/google/organic/tasks_ready";
 
+/**
+ * The family label `task_get` calls are metered under.
+ *
+ * Without it every task id becomes its own `api_usage.endpoint` value and the
+ * usage report's by-endpoint grouping degenerates into one row per SERP.
+ */
+export const GOOGLE_ORGANIC_TASK_GET = "serp/google/organic/task_get/advanced";
+
 /** `task_get/advanced/<id>`. See note 3 above for why not `regular`. */
 export function googleOrganicTaskGetEndpoint(taskId: string): string {
-  return `serp/google/organic/task_get/advanced/${encodeURIComponent(taskId)}`;
+  return `${GOOGLE_ORGANIC_TASK_GET}/${encodeURIComponent(taskId)}`;
 }
 
 /**
@@ -435,6 +443,8 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         method: "GET",
         ttl: "none",
         spendCapExempt: true,
+        // The id stays in the URL; the meter records the family.
+        meterAs: GOOGLE_ORGANIC_TASK_GET,
         // "Task Handed" / "Task In Queue" are the normal answer while the
         // standard queue works; they must not raise.
         okTaskStatusCodes: [
