@@ -5,4 +5,4 @@
  * survives the Worker bundle, the SPA bundle and vitest without build-time
  * `define` plumbing. Bump it alongside package.json's `version`.
  */
-export const APP_VERSION = "0.0.0";
+export const APP_VERSION = "0.1.0";

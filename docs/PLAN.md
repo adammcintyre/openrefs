@@ -13,6 +13,8 @@ Each phase ships behind a review: spec → implementation (parallel agents on di
 
 ## Phase 1 — Keyword Research + Domain Overview
 
+**Status: shipped 2026-08-29 (v0.1.0).**
+
 Keyword search (volume, history, difficulty, intent, CPC), ideas/related/suggestions tables, keyword → SERP view ("who ranks", cached with live refresh), collections + CSV export. Domain Overview: traffic estimate, Domain Score, top organic keywords, top pages, competitors, country split, paid search, history charts.
 
 ## Phase 2 — Backlinks + Gap Analysis
