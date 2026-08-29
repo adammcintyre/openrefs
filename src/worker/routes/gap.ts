@@ -270,11 +270,12 @@ export function upstreamQueriesForMode(
  *    broader than `missing`: every missing keyword is also untapped. The
  *    difference is the whole peer set having it (a strong signal that the
  *    keyword applies to your market) versus one rival having found it.
- *  - `weak` — you rank, every competitor ranks, and every one of them is
- *    ahead of you. Requiring all of them to rank is the strict reading of
- *    "worse than every competitor shown": a competitor that does not rank at
- *    all has not beaten you, so a row where one is absent is not evidence that
- *    you are behind the field.
+ *  - `weak` — you rank, and at least one competitor ranks ahead of you. The
+ *    lenient reading (industry convention, and the orchestrator's call): with
+ *    several competitors, "every competitor outranks you" is so rare the tab
+ *    reads as broken, while "someone you named beats you here" is exactly the
+ *    actionable list. Competitors that do not rank contribute nothing either
+ *    way.
  *  - `all` — everything fetched.
  */
 export function matchesGapMode(mode: GapMode, row: GapKeywordRow): boolean {
@@ -294,8 +295,8 @@ export function matchesGapMode(mode: GapMode, row: GapKeywordRow): boolean {
       return row.target.position === null && ranking.length > 0;
     case "weak": {
       const mine = row.target.position;
-      if (mine === null || !everyCompetitorRanks) return false;
-      return ranking.every((position) => position < mine);
+      if (mine === null || ranking.length === 0) return false;
+      return ranking.some((position) => position < mine);
     }
   }
 }

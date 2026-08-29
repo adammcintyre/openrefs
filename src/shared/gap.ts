@@ -55,7 +55,7 @@ export const GAP_MAX_PAGES = 20;
 /** One-line explanations, so the UI's mode tabs describe the same rule. */
 export const GAP_MODE_DESCRIPTIONS: Record<GapMode, string> = {
   missing: "Every competitor ranks for this keyword and you don't.",
-  weak: "You rank for this keyword, but every competitor ranks higher.",
+  weak: "You rank for this keyword, but at least one competitor ranks higher.",
   untapped: "At least one competitor ranks for this keyword and you don't.",
   all: "Every keyword any of these domains ranks for.",
 };

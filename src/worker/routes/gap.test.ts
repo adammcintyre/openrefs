@@ -160,19 +160,24 @@ describe("matchesGapMode", () => {
     expect(matchesGapMode("missing", onlyOneRival)).toBe(false);
   });
 
-  describe("weak — you rank and every competitor is ahead of you", () => {
+  describe("weak — you rank and at least one competitor is ahead of you", () => {
     it("keeps a keyword where all rivals outrank you", () => {
       expect(matchesGapMode("weak", gapRow(24, [2, 11]))).toBe(true);
     });
 
-    it("drops it when one rival is behind you", () => {
-      expect(matchesGapMode("weak", gapRow(10, [2, 40]))).toBe(false);
+    it("keeps it when one rival is ahead even though another is behind", () => {
+      // Lenient reading (industry convention): someone you named beats you
+      // here, so it is actionable — regardless of the rest of the field.
+      expect(matchesGapMode("weak", gapRow(10, [2, 40]))).toBe(true);
     });
 
-    it("drops it when a rival does not rank at all", () => {
-      // The strict reading: a competitor that is absent has not beaten you, so
-      // this is not evidence you are behind the field.
-      expect(matchesGapMode("weak", gapRow(10, [2, null]))).toBe(false);
+    it("keeps it when the only ranking rival is ahead of you", () => {
+      expect(matchesGapMode("weak", gapRow(10, [2, null]))).toBe(true);
+    });
+
+    it("drops it when no ranking rival is ahead of you", () => {
+      expect(matchesGapMode("weak", gapRow(3, [10, null]))).toBe(false);
+      expect(matchesGapMode("weak", gapRow(3, [null, null]))).toBe(false);
     });
 
     it("drops it when you are absent — that is a missing/untapped keyword", () => {
