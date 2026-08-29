@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # Typechecks all three tsconfig projects (app, worker, node).
+      - run: npm run check
+
+      - run: npm run test
+
+      # Builds both Vite environments: the client bundle and the Worker.
+      # Needs no Cloudflare credentials and no .dev.vars.
+      - run: npm run build
