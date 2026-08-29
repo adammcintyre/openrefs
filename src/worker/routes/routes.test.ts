@@ -29,6 +29,7 @@ const MOUNT_PROBES: Record<string, string> = {
   "/projects": "/projects",
   "/audits": "/audits/abc",
   "/dashboard": "/dashboard",
+  "/gsc": "/gsc/status",
   "/meta": "/meta/locations",
   "/dev": "/dev/dfs-smoke",
 };
@@ -143,6 +144,20 @@ describe("session guard", () => {
     ["GET", "/audits/abc/issues/titles"],
     ["DELETE", "/audits/abc"],
     ["GET", "/dashboard"],
+    // Phase 5. Search Console spends nothing, but every route reads or
+    // rewrites a tenant's Google grant. The 401 lands before the config gate
+    // too, so an anonymous caller cannot even probe whether this deployment
+    // has Search Console set up.
+    ["GET", "/gsc/status"],
+    ["GET", "/gsc/connect"],
+    ["GET", "/gsc/callback"],
+    ["GET", "/gsc/sites"],
+    ["PATCH", "/gsc/connection"],
+    ["DELETE", "/gsc/connection"],
+    ["GET", "/gsc/overview"],
+    ["GET", "/gsc/queries"],
+    ["GET", "/gsc/pages"],
+    ["GET", "/gsc/opportunities"],
     // Free and non-tenant, but still not public.
     ["GET", "/meta/locations"],
     ["GET", "/meta/languages"],

@@ -20,3 +20,32 @@ APP_MASTER_KEY="replace-me-with-64-hex-characters"
 # Get yours at https://dataforseo.com — OpenRefs never ships or proxies a key.
 DATAFORSEO_LOGIN="you@example.com"
 DATAFORSEO_PASSWORD="replace-me"
+
+# ---------------------------------------------------------------------------
+# Google Search Console (Phase 5) — OPTIONAL.
+#
+# Leave both unset and the module simply reports itself unconfigured:
+# GET /api/v1/gsc/status answers `configured: false`, the UI shows setup
+# instructions, and every other /gsc route returns 409 gsc_not_configured.
+# Nothing else in OpenRefs is affected.
+#
+# To enable it, in the Google Cloud console:
+#   1. Create (or pick) a project and enable the **Google Search Console API**.
+#   2. OAuth consent screen → External. You only need the single scope
+#      https://www.googleapis.com/auth/webmasters.readonly — read-only, so
+#      OpenRefs can never change anything in a connected Search Console.
+#      Set the privacy policy URL to your deployment's /privacy page.
+#   3. Credentials → Create OAuth client ID → **Web application**, with the
+#      authorized redirect URI:
+#         https://<your-host>/api/v1/gsc/callback
+#      For local development that is:
+#         http://localhost:5173/api/v1/gsc/callback
+#      It must match byte for byte — Google compares the string, and a missing
+#      or extra trailing slash is a redirect_uri_mismatch.
+#
+# The client id is public (it appears in every auth URL) and belongs in
+# wrangler.jsonc `vars` for a deployed build; it is repeated here only so local
+# dev can use a different, localhost-registered client. The secret is a secret:
+# in production set it with `wrangler secret put GOOGLE_CLIENT_SECRET`.
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""

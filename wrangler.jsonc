@@ -11,7 +11,17 @@
   // src/worker/dataforseo/credentials.ts and the /api/v1/dev routes. A hosted
   // tenant must never reach either, so nothing else may gate on this value.
   "vars": {
-    "APP_ENV": "production"
+    "APP_ENV": "production",
+
+    // Google OAuth client id for the Search Console module (docs/specs/PHASE5.md).
+    // Empty is the supported default and is not an error: with no client
+    // configured, GET /api/v1/gsc/status answers `configured: false` and the UI
+    // renders self-host setup guidance instead of a broken Connect button.
+    // Its partner GOOGLE_CLIENT_SECRET is a *secret*, never a var — set it with
+    // `wrangler secret put GOOGLE_CLIENT_SECRET` (locally: .dev.vars).
+    // A client id is public by design (it ships in every auth URL), so it lives
+    // here in the clear where self-hosters can see what to replace.
+    "GOOGLE_CLIENT_ID": ""
   },
 
   // The React SPA is served from the same Worker as static assets.

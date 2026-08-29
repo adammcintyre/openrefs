@@ -9,6 +9,7 @@ import dashboard from "./dashboard";
 import dev from "./dev";
 import domains from "./domains";
 import gap from "./gap";
+import gsc from "./gsc";
 import health from "./health";
 import keywords from "./keywords";
 import meta from "./meta";
@@ -46,6 +47,9 @@ export const routeModules: RouteModule[] = [
   // audit, mounted here. Both live in routes/audits.ts.
   { path: "/audits", router: audits },
   { path: "/dashboard", router: dashboard },
+  // Search Console. Config-gated: with no Google OAuth client set, /gsc/status
+  // reports `configured: false` and every other route here answers 409.
+  { path: "/gsc", router: gsc },
   { path: "/meta", router: meta },
   // Every route in this module 404s unless APP_ENV === "development".
   { path: "/dev", router: dev },

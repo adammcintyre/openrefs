@@ -10,11 +10,17 @@
  * Blobs go first and D1 last. If a purge fails halfway the workspace still
  * exists, so the operation can simply be retried; deleting the row first would
  * strand KV and R2 data belonging to a tenant that no longer appears anywhere.
+ *
+ * A fourth store is not ours at all: Google holds an OAuth grant for every
+ * connected Search Console project, and no cascade of ours can reach it. It is
+ * revoked explicitly, before the rows carrying the tokens disappear.
  */
 import { eq } from "drizzle-orm";
 
 import type { Db } from "../../db";
 import { workspaces } from "../../db";
+import type { RevokeSummary } from "../gsc/tokens";
+import { revokeWorkspaceGoogleTokens } from "../gsc/tokens";
 
 /** KV keys for a workspace. Matches docs/ARCHITECTURE.md. */
 export function workspaceKvPrefix(workspaceId: string): string {
@@ -29,6 +35,13 @@ export function workspaceR2Prefix(workspaceId: string): string {
 export interface PurgeResult {
   kvKeys: number;
   r2Objects: number;
+  /**
+   * Google grants we asked to have revoked, and how many Google accepted.
+   * Reported rather than swallowed so an operator can see that the third-party
+   * half of the deletion actually happened — `attempted > revoked` is normal
+   * when several projects share one Google account (see `revokeToken`).
+   */
+  googleGrants: RevokeSummary;
 }
 
 /** Deletes every KV key under the workspace prefix. Returns how many went. */
@@ -81,29 +94,58 @@ export interface DeletionStores {
   db: Db;
   kv: KVNamespace;
   r2: R2Bucket;
+  /**
+   * `APP_MASTER_KEY`. Needed to decrypt the stored Google refresh tokens for
+   * long enough to revoke them — the one step of this cascade that has to read
+   * a secret rather than just delete it.
+   */
+  masterKey: string;
 }
 
 /**
  * Removes a workspace from every store. Callers must have already checked that
  * the actor is an owner — this function does no authorization of its own, so
  * that account deletion can reuse it for workspaces the user solely owns.
+ *
+ * The three purges run together because they are independent, and all three
+ * finish before the D1 row goes: the Google revocation in particular reads
+ * `gsc_connections` through the `projects` join, so the cascade that drops
+ * those rows must not have run yet.
+ *
+ * **Revocation can never block deletion.** `revokeWorkspaceGoogleTokens` is
+ * documented not to throw, and the `catch` here is the second line of that
+ * defence: if Google is unreachable, or a token will not decrypt, or the
+ * lookup itself fails, the user's data is still deleted. Refusing to honour a
+ * deletion request because a third party is having a bad day would be the
+ * worse failure by a wide margin — and the grant remains revocable by the user
+ * from their own Google account settings.
  */
 export async function deleteWorkspaceEverywhere(
-  { db, kv, r2 }: DeletionStores,
+  { db, kv, r2, masterKey }: DeletionStores,
   workspaceId: string,
 ): Promise<PurgeResult> {
-  const [kvKeys, r2Objects] = await Promise.all([
+  const [kvKeys, r2Objects, googleGrants] = await Promise.all([
     purgeWorkspaceKv(kv, workspaceId),
     purgeWorkspaceR2(r2, workspaceId),
+    revokeWorkspaceGoogleTokens(db, masterKey, workspaceId).catch(
+      (err: unknown) => {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            message: "google token revocation failed during workspace deletion",
+            workspaceId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        return { attempted: 0, revoked: 0 };
+      },
+    ),
   ]);
 
   // TODO(phase 8, hosted): delete the Stripe customer / cancel the
   // subscription for this workspace before the row goes.
-  // TODO(phase 5): revoke Google OAuth refresh tokens held in
-  // `gsc_connections` for this workspace's projects — the cascade drops the
-  // rows, but Google keeps the grant alive until it is explicitly revoked.
 
   await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
 
-  return { kvKeys, r2Objects };
+  return { kvKeys, r2Objects, googleGrants };
 }

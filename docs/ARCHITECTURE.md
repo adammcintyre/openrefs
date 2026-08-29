@@ -16,7 +16,7 @@ One Cloudflare Worker runs everything: a Hono JSON API under `/api/v1` plus the 
 |---|---|
 | Worker | Hono, TypeScript strict, zod validation |
 | DB | D1 + Drizzle ORM (`drizzle-kit` migrations in `migrations/`) |
-| Cache | Workers KV, keys `ws:<workspaceId>:dfs:<endpoint-hash>` |
+| Cache | Workers KV, keys `ws:<workspaceId>:dfs:<endpoint-hash>` (Search Console adds `…:gsc-token:<projectId>`, `…:gsc-broken:<projectId>` and `…:gsc:<projectId>:<propertyHash>:<dimensions>:<from>:<to>`, all under the same workspace prefix so one sweep clears them) |
 | Blobs | R2, keys `ws:<workspaceId>/...` |
 | Frontend | React + Vite (`@cloudflare/vite-plugin`), Tailwind v4, react-router, TanStack Query + Table, Recharts |
 | Tests | vitest |
