@@ -67,9 +67,13 @@ export interface KeywordRow {
 /**
  * GET /api/v1/keywords/overview
  *
- * Fans out to three upstream endpoints (search volume, bulk difficulty, search
- * intent) and merges them, so any one of them being unavailable leaves its
- * fields null rather than failing the request.
+ * One upstream call (Labs `keyword_overview`) carries every field below.
+ *
+ * Two of them are structurally null on that endpoint and the UI should not
+ * wait for values that are never coming: `intentProbability`, and the
+ * `probability` on each entry of `secondaryIntents`. The endpoint reports
+ * intent as bare labels; only the separate (and separately billed)
+ * search_intent endpoint attaches a confidence figure.
  */
 export interface KeywordOverviewResponse extends ResultMeta {
   keyword: string;
@@ -85,9 +89,12 @@ export interface KeywordOverviewResponse extends ResultMeta {
   /** 0–100. */
   keywordDifficulty: number | null;
   intent: KeywordIntentLabel | null;
-  /** 0–1 confidence in `intent`. */
+  /** 0–1 confidence in `intent`. Always null — see the note above. */
   intentProbability: number | null;
-  /** Runner-up intents, strongest first. Often empty. */
+  /**
+   * Supplementary intents. Often empty; `probability` is always null (the
+   * overview endpoint reports these as labels only).
+   */
   secondaryIntents: { intent: KeywordIntentLabel | null; probability: number | null }[];
   /** Up to 12 months, oldest first — the TrendLineChart's series. */
   monthlySearches: MonthlyVolumePoint[];

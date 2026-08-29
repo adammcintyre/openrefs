@@ -1,5 +1,5 @@
 /**
- *   GET /api/v1/keywords/overview      volume + difficulty + intent, merged
+ *   GET /api/v1/keywords/overview      labs keyword_overview (one call)
  *   GET /api/v1/keywords/ideas         labs keyword_ideas
  *   GET /api/v1/keywords/suggestions   labs keyword_suggestions
  *   GET /api/v1/keywords/related       labs related_keywords
@@ -115,14 +115,24 @@ function toKeywordRow(row: LabsKeywordRow): KeywordRow {
 /**
  * GET /api/v1/keywords/overview
  *
- * Three upstream endpoints, because no single one carries all of it: Google
- * Ads has volume and CPC, Labs has difficulty, and intent is its own endpoint
- * again (and takes no location — it is language-only).
+ * ONE upstream call: `dataforseo_labs/google/keyword_overview/live` carries
+ * volume, CPC, competition, the bid range, difficulty and intent together.
  *
- * They are fetched concurrently and settled independently: difficulty or
- * intent failing leaves those fields null rather than costing the user the
- * volume data they already paid for. A volume failure does throw — with no
- * volume there is no overview to show.
+ * It replaced a three-call composition (google_ads/search_volume +
+ * bulk_keyword_difficulty + search_intent) that cost ≈ $0.114 a lookup and
+ * whose search_volume leg was observed in production stalling past the
+ * client's 60s timeout. The single call is ≈ $0.012 — roughly a tenth — and
+ * has one failure mode instead of three, so nothing here needs the
+ * partial-failure handling the fan-out did.
+ *
+ * The response contract is unchanged; two fields are honestly narrower:
+ *
+ *  - `intentProbability` is always null. This endpoint reports
+ *    `search_intent_info.main_intent` as a bare label with no confidence
+ *    figure — only `search_intent/live` carries one, and buying a second call
+ *    for one decimal is not the trade the UI needs.
+ *  - `secondaryIntents[].probability` is null for the same reason:
+ *    `foreign_intent` is an array of plain label strings here.
  */
 keywords.get("/overview", async (c) => {
   const query = readQuery(c, keywordQuerySchema.extend({ fresh: booleanParam }));
@@ -130,40 +140,29 @@ keywords.get("/overview", async (c) => {
   const dfs = await createDataForSeoApi(c.env, db, query.workspace);
 
   const keyword = query.keyword.toLowerCase();
-  const market = { locationCode: query.location, languageCode: query.language };
 
-  const [volume, difficulty, intent] = await Promise.all([
-    dfs.keywordsData.googleAdsSearchVolumeLive({
-      keywords: [keyword],
-      ...market,
-      fresh: query.fresh,
-    }),
-    settle(
-      dfs.labs.googleBulkKeywordDifficultyLive({
-        keywords: [keyword],
-        ...market,
-        fresh: query.fresh,
-      }),
-    ),
-    settle(
-      dfs.labs.googleSearchIntentLive({
-        keywords: [keyword],
-        // Deliberately no location: this endpoint does not accept one.
-        languageCode: query.language,
-        fresh: query.fresh,
-      }),
-    ),
-  ]);
+  const overview = await dfs.labs.googleKeywordOverviewLive({
+    keywords: [keyword],
+    locationCode: query.location,
+    languageCode: query.language,
+    fresh: query.fresh,
+  });
 
-  const row = volume.keywords[0];
-  const difficultyRow = difficulty?.items[0];
-  const intentRow = intent?.items[0];
+  // A keyword their database does not know is OMITTED from `items` rather than
+  // returned with null metrics, so `items` can be empty for a valid request.
+  // Matching by keyword (not by index) is what keeps this correct if the
+  // endpoint ever returns more than it was asked for.
+  const row =
+    overview.items.find((item) => item.keyword.toLowerCase() === keyword) ??
+    overview.items[0] ??
+    null;
 
   // DataForSEO returns monthly volumes NEWEST-first despite its docs (observed
-  // live, 2026-08). Sort ascending before slicing so "the last N months" takes
-  // the most recent ones and the shared type's oldest-first contract holds
-  // regardless of upstream order.
-  const monthly = [...(row?.monthlySearches ?? [])].sort(
+  // live, 2026-08; the keyword_overview docs state no ordering at all). Sort
+  // ascending before slicing so "the last N months" takes the most recent ones
+  // and the shared type's oldest-first contract holds regardless of upstream
+  // order.
+  const monthly = [...(row?.metrics.monthlySearches ?? [])].sort(
     (a, b) =>
       (a.year ?? 0) - (b.year ?? 0) || (a.month ?? 0) - (b.month ?? 0),
   );
@@ -173,32 +172,30 @@ keywords.get("/overview", async (c) => {
     keyword,
     locationCode: query.location,
     languageCode: query.language,
-    searchVolume: row?.searchVolume ?? null,
-    cpc: row?.cpc ?? null,
-    // Google Ads reports competition as a bucket string plus a 0–100 index;
-    // the shared type wants the 0–1 float the rest of the app uses.
-    competition: row?.competitionIndex === null || row?.competitionIndex === undefined
-      ? null
-      : row.competitionIndex / 100,
-    competitionLevel: row?.competition ?? null,
-    lowTopOfPageBid: row?.lowTopOfPageBid ?? null,
-    highTopOfPageBid: row?.highTopOfPageBid ?? null,
-    keywordDifficulty: difficultyRow?.keywordDifficulty ?? null,
-    intent: intentRow?.intent ?? null,
-    intentProbability: intentRow?.probability ?? null,
-    secondaryIntents: intentRow?.secondary ?? [],
+    searchVolume: row?.metrics.searchVolume ?? null,
+    cpc: row?.metrics.cpc ?? null,
+    // Already a 0–1 float on Labs — the /100 this used to do was for Google
+    // Ads' `competition_index`, which is a different field on a different API.
+    competition: row?.metrics.competition ?? null,
+    competitionLevel: row?.metrics.competitionLevel ?? null,
+    lowTopOfPageBid: row?.metrics.lowTopOfPageBid ?? null,
+    highTopOfPageBid: row?.metrics.highTopOfPageBid ?? null,
+    keywordDifficulty: row?.keywordDifficulty ?? null,
+    intent: row?.mainIntent ?? null,
+    // See the note above: this endpoint carries no confidence figure.
+    intentProbability: null,
+    secondaryIntents: (row?.secondaryIntents ?? []).map((intent) => ({
+      intent,
+      probability: null,
+    })),
     monthlySearches: recent.map((point) => ({
       year: point.year,
       month: point.month,
       period: toIsoMonth(point.year, point.month),
       searchVolume: point.searchVolume,
     })),
-    costUsd: sumCost(volume, difficulty, intent),
-    // Only "cached" if every call that contributed was.
-    cached:
-      volume.cached &&
-      (difficulty?.cached ?? true) &&
-      (intent?.cached ?? true),
+    costUsd: overview.costUsd,
+    cached: overview.cached,
   };
   return c.json(body);
 });
@@ -338,26 +335,6 @@ function listBody(
     costUsd: result.costUsd,
     cached: result.cached,
   };
-}
-
-/**
- * Turns a rejection into `null`.
- *
- * Used only for the *supplementary* halves of the overview. The distinction
- * that matters: the caller has already been billed for whatever succeeded, so
- * discarding a good volume response because an intent lookup failed would be
- * charging someone for nothing.
- */
-async function settle<T>(promise: Promise<T>): Promise<T | null> {
-  try {
-    return await promise;
-  } catch {
-    return null;
-  }
-}
-
-function sumCost(...results: ({ costUsd: number } | null)[]): number {
-  return results.reduce((total, result) => total + (result?.costUsd ?? 0), 0);
 }
 
 export default keywords;

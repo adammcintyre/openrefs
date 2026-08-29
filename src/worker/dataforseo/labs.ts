@@ -18,6 +18,13 @@
  *    Rank is `rank_group` / `rank_absolute`.
  *  - search_intent takes NO location — it is language-only — and names its
  *    intent field `keyword_intent.label`, not `search_intent_info.main_intent`.
+ *  - keyword_overview returns volume, difficulty AND intent in one call, and
+ *    its three gotchas are all documented: `keyword_info.competition` is
+ *    already a **0–1 float** (Google Ads' `competition_index` is the 0–100 one
+ *    — do not divide); a keyword their database does not know is **omitted
+ *    from `items`** rather than returned with nulls, so `items` can be shorter
+ *    than `keywords` and callers must match by the `keyword` field; and
+ *    `result[0]` carries no `total_count` and no `offset`.
  */
 import { z } from "zod";
 
@@ -43,6 +50,8 @@ import {
   toLabsMetricsBlock,
 } from "./schema";
 
+export const GOOGLE_KEYWORD_OVERVIEW_LIVE =
+  "dataforseo_labs/google/keyword_overview/live";
 export const GOOGLE_KEYWORD_IDEAS_LIVE =
   "dataforseo_labs/google/keyword_ideas/live";
 export const GOOGLE_KEYWORD_SUGGESTIONS_LIVE =
@@ -79,6 +88,52 @@ export const LABS_MAX_BULK_KEYWORDS = 1000;
  * Depth 2 is the useful default for a UI list; anything higher is a bulk job.
  */
 export const RELATED_KEYWORDS_MAX_DEPTH = 4;
+
+/**
+ * keyword_overview's documented ceilings: 700 keywords per task, each at most
+ * 80 characters and 10 words.
+ */
+export const KEYWORD_OVERVIEW_MAX_KEYWORDS = 700;
+export const KEYWORD_OVERVIEW_MAX_KEYWORD_LENGTH = 80;
+
+/* -------------------------------------------------------------------------- */
+/* Keyword overview                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One call that carries what /keywords/overview used to assemble from three:
+ * volume + CPC + competition (keyword_info), difficulty (keyword_properties)
+ * and intent (search_intent_info).
+ *
+ * No `limit`, `offset`, `filters` or `order_by` — the endpoint documents none
+ * of them, so this is a bulk lookup, not a paged list.
+ */
+const keywordOverviewParamsSchema = z.object({
+  keywords: z
+    .array(z.string().trim().min(1).max(KEYWORD_OVERVIEW_MAX_KEYWORD_LENGTH))
+    .min(1)
+    .max(KEYWORD_OVERVIEW_MAX_KEYWORDS),
+  locationCode: z.number().int().positive(),
+  languageCode: z.string().trim().min(2).max(8),
+  fresh: z.boolean().optional(),
+});
+
+export type KeywordOverviewParams = z.input<typeof keywordOverviewParamsSchema>;
+
+/**
+ * Rows come back in the flat shape — `keyword_info` at the top level, exactly
+ * like keyword_ideas — so `labsKeywordRowSchema` parses them unchanged.
+ *
+ * `result[0]` on this endpoint carries only `se_type`, `location_code`,
+ * `language_code`, `items_count` and `items`: there is **no `total_count` and
+ * no `offset`**, which the shared wrapper schema tolerates because every one of
+ * its fields is nullish.
+ */
+export interface KeywordOverviewResult extends WrappedMeta {
+  items: LabsKeywordRow[];
+  /** How many keywords came back. See the omission rule on the wrapper. */
+  itemsCount: number | null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Keyword ideas                                                               */
@@ -121,6 +176,15 @@ export interface LabsKeywordRow {
   keywordDifficulty: number | null;
   /** "informational" | "navigational" | "commercial" | "transactional". */
   mainIntent: string | null;
+  /**
+   * Supplementary intents, from `search_intent_info.foreign_intent`.
+   *
+   * Doc surprise worth stating twice: these are **plain strings with no
+   * probability**, unlike the `search_intent/live` endpoint's
+   * `secondary_keyword_intents`, which are objects carrying one. Same concept,
+   * two shapes, two endpoints — see the header note on search_intent.
+   */
+  secondaryIntents: string[];
   raw: unknown;
 }
 
@@ -606,6 +670,9 @@ export interface CompetitorsDomainResult extends WrappedMeta {
 }
 
 export interface LabsApi {
+  googleKeywordOverviewLive(
+    params: KeywordOverviewParams,
+  ): Promise<KeywordOverviewResult>;
   googleKeywordIdeasLive(params: KeywordIdeasParams): Promise<KeywordIdeasResult>;
   googleKeywordSuggestionsLive(
     params: KeywordSuggestionsParams,
@@ -638,6 +705,46 @@ const keywordIdeasResultSchema = labsWrapperSchema(z.unknown());
 
 export function createLabsApi(client: DataForSeoClient): LabsApi {
   return {
+    async googleKeywordOverviewLive(params) {
+      const { keywords, locationCode, languageCode, fresh } = parseParams(
+        keywordOverviewParamsSchema,
+        params,
+        `Invalid keyword overview request (max ${KEYWORD_OVERVIEW_MAX_KEYWORDS} keywords, ${KEYWORD_OVERVIEW_MAX_KEYWORD_LENGTH} characters each).`,
+      );
+
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_KEYWORD_OVERVIEW_LIVE,
+        payload: [
+          {
+            // An ARRAY, like keyword_ideas — not the singular `keyword` that
+            // keyword_suggestions takes. DataForSEO lowercases these itself;
+            // we do it anyway so the cache key does not fork on casing.
+            keywords: normalizeKeywordList(keywords),
+            location_code: locationCode,
+            language_code: languageCode,
+            // include_serp_info / include_clickstream_data are deliberately
+            // not exposed: neither feeds anything we render, and clickstream
+            // doubles the price of the request.
+          },
+        ],
+        // Everything this returns — volume, difficulty, intent — is monthly
+        // database data, the same clock as search volume.
+        ttl: "long",
+        fresh,
+      });
+
+      const wrapper = parseWrapper(
+        response.results[0],
+        GOOGLE_KEYWORD_OVERVIEW_LIVE,
+      );
+      return {
+        items: wrapper.items.map(toLabsKeywordRow),
+        itemsCount: wrapper.items_count,
+        costUsd: response.costUsd,
+        cached: response.cached,
+      };
+    },
+
     async googleKeywordIdeasLive(params) {
       const {
         keyword,
@@ -1174,6 +1281,7 @@ function fromKeywordRow(
     metrics: toLabsKeywordMetrics(item.keyword_info),
     keywordDifficulty: item.keyword_properties?.keyword_difficulty ?? null,
     mainIntent: item.search_intent_info?.main_intent ?? null,
+    secondaryIntents: item.search_intent_info?.foreign_intent ?? [],
     raw,
   };
 }
