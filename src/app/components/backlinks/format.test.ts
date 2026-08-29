@@ -135,12 +135,19 @@ describe("formatAnchor", () => {
     expect(formatAnchor("  free   brand\npacks ")).toBe("free brand packs");
   });
 
-  it("labels an empty anchor rather than implying missing data", () => {
-    expect(formatAnchor("")).toBe("(empty anchor)");
-    expect(formatAnchor("   ")).toBe("(empty anchor)");
+  /**
+   * Live check against brandpacks.com: the largest anchor group comes back as
+   * `anchor: null` with 25,825 backlinks — image links, which genuinely have
+   * no anchor text. An em dash there would call the biggest group in the table
+   * "missing data".
+   */
+  it("labels an absent anchor rather than implying missing data", () => {
+    expect(formatAnchor("")).toBe("(no anchor text)");
+    expect(formatAnchor("   ")).toBe("(no anchor text)");
+    expect(formatAnchor(null)).toBe("(no anchor text)");
   });
 
-  it("still uses an em dash when the field itself is absent", () => {
-    expect(formatAnchor(null)).toBe("—");
+  it("still uses an em dash when the field was never provided at all", () => {
+    expect(formatAnchor(undefined)).toBe("—");
   });
 });

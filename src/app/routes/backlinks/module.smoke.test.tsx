@@ -224,8 +224,9 @@ const ANCHORS: AnchorsResponse = {
       lostDate: null,
     },
     {
-      // Image links produce these, and they are not missing data.
-      anchor: "",
+      // Image links produce these, and they are not missing data. The live API
+      // sends null here, not "" — for brandpacks.com it is the largest group.
+      anchor: null,
       score: null,
       backlinks: 9,
       referringDomains: 4,
@@ -409,8 +410,8 @@ describe("Anchors tab", () => {
     expect(html).toContain("34");
   });
 
-  it("labels an empty anchor rather than implying missing data", () => {
-    expect(html).toContain("(empty anchor)");
+  it("labels an absent anchor rather than implying missing data", () => {
+    expect(html).toContain("(no anchor text)");
   });
 });
 

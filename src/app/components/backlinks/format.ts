@@ -175,12 +175,19 @@ export function seenDate(value: string | null | undefined): string | null {
  * Anchor text, made safe to put in a table row.
  *
  * Anchors are arbitrary strings scraped off other people's pages: they arrive
- * with newlines, runs of whitespace, and sometimes nothing at all. An empty
- * anchor is a real and common thing (image links, bare URLs), and saying so is
- * more useful than an em dash that reads as missing data.
+ * with newlines, runs of whitespace, and often nothing at all.
+ *
+ * **"Nothing at all" is a fact, not a gap**, and the live API proves it: for
+ * brandpacks.com the single largest anchor group is `anchor: null` with 25,825
+ * backlinks behind it, which matches the 24,187 links the summary reports as
+ * `image` type. Image links and bare-URL links genuinely have no anchor text.
+ * So `null` and `""` are treated alike and labelled, rather than rendered as an
+ * em dash that would read as data the provider failed to return — on the
+ * Anchors tab an em dash would be actively wrong, since the row exists
+ * *because* a group of links share this (absent) anchor.
  */
 export function formatAnchor(value: string | null | undefined): string {
-  if (value === null || value === undefined) return EM_DASH;
-  const collapsed = value.replaceAll(/\s+/g, " ").trim();
-  return collapsed === "" ? "(empty anchor)" : collapsed;
+  if (value === undefined) return EM_DASH;
+  const collapsed = (value ?? "").replaceAll(/\s+/g, " ").trim();
+  return collapsed === "" ? "(no anchor text)" : collapsed;
 }

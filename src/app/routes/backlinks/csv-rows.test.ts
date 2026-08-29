@@ -156,9 +156,14 @@ describe("anchorCsvRows", () => {
     expect(anchorCsvRows([ANCHOR])[0]).toHaveLength(ANCHOR_CSV_HEADERS.length);
   });
 
-  it("keeps an empty anchor empty rather than labelling it in the data", () => {
-    const [row] = anchorCsvRows([{ ...ANCHOR, anchor: "" }]);
-    expect(row?.[0]).toBe("");
+  /**
+   * The table labels an absent anchor "(no anchor text)" so it does not read as
+   * missing data; the export must not, or a spreadsheet grouping by anchor
+   * would grow a category that does not exist upstream.
+   */
+  it("keeps an absent anchor blank rather than exporting the table's label", () => {
+    expect(anchorCsvRows([{ ...ANCHOR, anchor: "" }])[0]?.[0]).toBe("");
+    expect(anchorCsvRows([{ ...ANCHOR, anchor: null }])[0]?.[0]).toBeNull();
   });
 });
 
