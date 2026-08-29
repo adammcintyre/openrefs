@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 
+import { ToastProvider } from "./components/ui/toast";
 import { queryClient } from "./lib/query-client";
 import { ThemeProvider } from "./lib/theme";
 import { AppRoutes } from "./routes";
@@ -18,7 +19,11 @@ createRoot(container).render(
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <AppRoutes />
+          {/* Inside the router so a toast can be raised from any route,
+              including the auth pages. */}
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>

@@ -1,3 +1,18 @@
+import {
+  ChartLine,
+  ClipboardCheck,
+  Compass,
+  GitCompareArrows,
+  Globe,
+  LayoutDashboard,
+  Link2,
+  Search,
+  Settings,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
 /**
  * The sidebar, and the source of truth for which routes exist inside /app.
  * Order follows docs/ARCHITECTURE.md "Product structure": ad-hoc research
@@ -14,6 +29,7 @@ export interface NavItem {
   description: string;
   /** Which docs/PLAN.md phase builds it. */
   phase: number;
+  icon: LucideIcon;
 }
 
 export interface NavGroup {
@@ -21,19 +37,26 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+/** Sits above the grouped sections, on its own. */
+export const DASHBOARD_ITEM: NavItem = {
+  segment: "",
+  label: "Dashboard",
+  description: "Workspace activity, recent research and spend at a glance.",
+  phase: 1,
+  icon: LayoutDashboard,
+};
+
+/** Sits below them, pinned to the bottom of the sidebar. */
+export const SETTINGS_ITEM: NavItem = {
+  segment: "settings",
+  label: "Settings",
+  description:
+    "Members and roles, API keys, your DataForSEO credentials and the workspace spend cap.",
+  phase: 0,
+  icon: Settings,
+};
+
 export const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Overview",
-    items: [
-      {
-        segment: "",
-        label: "Dashboard",
-        description:
-          "Workspace activity, recent research and spend at a glance.",
-        phase: 1,
-      },
-    ],
-  },
   {
     label: "Research",
     items: [
@@ -43,6 +66,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Search volume, history, difficulty, intent and CPC, plus ideas, related terms and suggestions.",
         phase: 1,
+        icon: Search,
       },
       {
         segment: "domain-overview",
@@ -50,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Traffic estimate, Domain Score, top organic keywords, top pages and competitors for any domain.",
         phase: 1,
+        icon: Globe,
       },
       {
         segment: "backlinks",
@@ -57,6 +82,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Referring domains, anchors, new and lost links, and history for any target.",
         phase: 2,
+        icon: Link2,
       },
       {
         segment: "gap-analysis",
@@ -64,6 +90,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Keywords your competitors rank for and you do not, across multiple domains.",
         phase: 2,
+        icon: GitCompareArrows,
       },
       {
         segment: "content-discovery",
@@ -71,6 +98,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Topic search enriched with traffic estimates and referring domains, filtered for low competition.",
         phase: 7,
+        icon: Compass,
       },
     ],
   },
@@ -83,6 +111,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Daily positions for tracked keywords by device and location, with movers and SERP features.",
         phase: 3,
+        icon: TrendingUp,
       },
       {
         segment: "site-audit",
@@ -90,6 +119,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Crawl your site for speed, indexability, metadata, duplicates, links and structured data issues.",
         phase: 4,
+        icon: ClipboardCheck,
       },
       {
         segment: "search-console",
@@ -97,6 +127,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Bind a Google property and surface striking-distance, low-CTR and cannibalisation reports.",
         phase: 5,
+        icon: ChartLine,
       },
       {
         segment: "ai-visibility",
@@ -104,22 +135,18 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Track whether AI engines mention and cite your site across a set of prompts.",
         phase: 6,
-      },
-    ],
-  },
-  {
-    label: "Workspace",
-    items: [
-      {
-        segment: "settings",
-        label: "Settings",
-        description:
-          "Members and roles, API keys, your DataForSEO credentials and the workspace spend cap.",
-        phase: 0,
+        icon: Sparkles,
       },
     ],
   },
 ];
 
-/** Flattened, for route generation. */
-export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+/**
+ * Flattened, for route generation. Order matters only in that every routable
+ * screen must appear exactly once — routes/index.tsx maps over this.
+ */
+export const NAV_ITEMS: NavItem[] = [
+  DASHBOARD_ITEM,
+  ...NAV_GROUPS.flatMap((group) => group.items),
+  SETTINGS_ITEM,
+];
