@@ -129,6 +129,22 @@ export interface TrackedKeywordRow {
   /** Best position ever recorded for this keyword. Null if never ranked. */
   bestPosition: number | null;
 
+  /**
+   * Google showed an AI Overview for this keyword at the last check.
+   *
+   * Free: it is read out of the SERP features the latest snapshot already
+   * stores, so no extra request and no extra column. False also means "never
+   * checked" — a keyword with no snapshot has no features to read — which the
+   * UI can disambiguate from `latest === null`.
+   *
+   * **Optional in the type, always present in the response.** The Phase 6
+   * retrofit had to be additive: making it required would have failed the
+   * typecheck on every pre-existing rank-tracking test fixture, which is a
+   * breaking change dressed as a new field. Read it as `row.aiOverview ??
+   * false`; tighten it to required once the fixtures carry it.
+   */
+  aiOverview?: boolean;
+
   /** Oldest first, last `RANK_SERIES_DAYS` days. Sparse — see `RankPoint`. */
   series: RankPoint[];
 }
@@ -187,6 +203,46 @@ export interface RankCheckEnqueuedResponse {
 }
 
 /* -------------------------------- helpers --------------------------------- */
+
+/**
+ * DataForSEO's element type for Google's AI Overview.
+ *
+ * Verified against https://docs.dataforseo.com/v3/serp/google/organic/
+ * task_get/advanced/ (2026-08-29), whose `item_types` list ends
+ * `…, "perspectives", "discussions_and_forums", "compare_sites", "ai_overview"`.
+ * That list is exactly what `rank_snapshots.serp_features_json` holds, because
+ * the snapshot writer stores `result[0].item_types` verbatim.
+ */
+export const AI_OVERVIEW_FEATURE = "ai_overview";
+
+/**
+ * The same feature as it appears *nested inside* a knowledge graph.
+ *
+ * DataForSEO also emits `knowledge_graph_ai_overview_item` for an AI Overview
+ * rendered as part of the knowledge panel. That form does not normally reach
+ * the top-level `item_types` list, so this is belt-and-braces: matching it
+ * costs one comparison and stops a rendering variant from reading as "no AI
+ * Overview", which would understate the thing the column exists to show.
+ */
+export const AI_OVERVIEW_KNOWLEDGE_GRAPH_FEATURE =
+  "knowledge_graph_ai_overview_item";
+
+/**
+ * Whether a snapshot's SERP features include an AI Overview.
+ *
+ * Pure, and exported so the Worker and any client that re-derives the badge
+ * agree. Case-insensitive because these strings arrive from a third party and
+ * a capitalisation change upstream should not silently empty a column.
+ */
+export function hasAiOverview(serpFeatures: readonly string[]): boolean {
+  return serpFeatures.some((feature) => {
+    const normalized = feature.trim().toLowerCase();
+    return (
+      normalized === AI_OVERVIEW_FEATURE ||
+      normalized === AI_OVERVIEW_KNOWLEDGE_GRAPH_FEATURE
+    );
+  });
+}
 
 /**
  * Movement over `days`, positive when the ranking improved.

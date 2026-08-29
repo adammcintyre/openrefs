@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { RankPoint } from "./tracking";
-import { positionChange, shiftIsoDate, toIsoDate } from "./tracking";
+import {
+  AI_OVERVIEW_FEATURE,
+  hasAiOverview,
+  positionChange,
+  shiftIsoDate,
+  toIsoDate,
+} from "./tracking";
 
 const series = (...points: [string, number | null][]): RankPoint[] =>
   points.map(([date, position]) => ({ date, position }));
@@ -113,5 +119,37 @@ describe("positionChange", () => {
     expect(positionChange(points, 1)).toBe(2);
     expect(positionChange(points, 7)).toBe(9);
     expect(positionChange(points, 30)).toBe(46);
+  });
+});
+
+/**
+ * The Phase 6 retrofit. `rank_snapshots.serp_features_json` already holds
+ * DataForSEO's `item_types` verbatim, so this predicate is the whole of the
+ * "does Google answer this query itself?" column — which makes getting the
+ * string exactly right the only thing that matters.
+ */
+describe("hasAiOverview", () => {
+  it("matches DataForSEO's documented element type", () => {
+    expect(AI_OVERVIEW_FEATURE).toBe("ai_overview");
+    expect(hasAiOverview(["organic", "people_also_ask", "ai_overview"])).toBe(true);
+  });
+
+  it("also matches the knowledge-graph rendering of the same feature", () => {
+    expect(hasAiOverview(["knowledge_graph_ai_overview_item"])).toBe(true);
+  });
+
+  it("is false for a SERP without one", () => {
+    expect(hasAiOverview([])).toBe(false);
+    expect(hasAiOverview(["organic", "images", "related_searches"])).toBe(false);
+  });
+
+  it("is not fooled by a feature that merely contains the words", () => {
+    expect(hasAiOverview(["ai_overview_reference"])).toBe(false);
+    expect(hasAiOverview(["overview"])).toBe(false);
+  });
+
+  it("survives a capitalisation change upstream", () => {
+    expect(hasAiOverview(["AI_Overview"])).toBe(true);
+    expect(hasAiOverview([" ai_overview "])).toBe(true);
   });
 });

@@ -45,6 +45,7 @@ import type {
 } from "../../shared/tracking";
 import {
   addTrackedKeywordsSchema,
+  hasAiOverview,
   positionChange,
   RANK_CHECK_COST_PER_KEYWORD_USD,
   RANK_SERIES_DAYS,
@@ -300,6 +301,9 @@ projectsRouter.get("/:id/keywords", async (c) => {
       change7d: positionChange(history, 7),
       change30d: positionChange(history, 30),
       bestPosition: best.get(row.id) ?? null,
+      // Phase 6 retrofit, free from data already loaded: the latest snapshot's
+      // SERP features tell us whether Google is answering this query itself.
+      aiOverview: hasAiOverview(latest?.serpFeatures ?? []),
       series,
     };
   });

@@ -7,10 +7,12 @@
  * `Record<JobType, JobHandler>` annotation turns a forgotten line into a
  * compile error rather than a job that quietly never runs.
  */
+import { aiRun } from "./ai_run";
 import { auditPoll } from "./audit_poll";
 import { rankCollect } from "./rank_collect";
 import { rankPost } from "./rank_post";
 import type { JobType } from "./queue";
+import { seedAiWeekly } from "./seed_ai_weekly";
 import { seedDaily } from "./seed_daily";
 import type { JobHandler } from "./types";
 
@@ -18,6 +20,9 @@ export * from "./queue";
 export * from "./snapshot";
 export type { JobContext, JobDetail, JobHandler, JobRecord } from "./types";
 export { ensureDailySeedJob } from "./seed_daily";
+export { ensureWeeklyAiSeedJob } from "./seed_ai_weekly";
+export { AI_SEED_STAGGER_MS } from "./seed_ai_weekly";
+export type { AiRunPayload } from "./ai_run";
 export type { RankPostPayload } from "./rank_post";
 export type { RankCollectPayload, RankCollectTask } from "./rank_collect";
 export type { AuditPollPayload } from "./audit_poll";
@@ -28,6 +33,8 @@ export const JOB_HANDLERS: Record<JobType, JobHandler> = {
   rank_post: rankPost,
   rank_collect: rankCollect,
   audit_poll: auditPoll,
+  seed_ai_weekly: seedAiWeekly,
+  ai_run: aiRun,
 };
 
 /**

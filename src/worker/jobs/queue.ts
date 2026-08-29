@@ -21,6 +21,8 @@ export const JOB_TYPES = [
   "rank_post",
   "rank_collect",
   "audit_poll",
+  "seed_ai_weekly",
+  "ai_run",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
@@ -53,6 +55,16 @@ export const JOB_BASE_BACKOFF_MS = 5 * 60_000;
 
 /** Hour (UTC) the daily seed runs. Quiet everywhere, cheap everywhere. */
 export const DAILY_SEED_HOUR_UTC = 3;
+
+/**
+ * When the weekly AI Visibility seed runs: Monday 04:00 UTC.
+ *
+ * Monday so a week's mention rates are complete before anyone looks at them on
+ * a working day, and 04:00 — an hour after the daily rank seed — so the two
+ * recurring seeds never contend for the same sweep's batch of five.
+ */
+export const WEEKLY_SEED_WEEKDAY_UTC = 1;
+export const WEEKLY_SEED_HOUR_UTC = 4;
 
 /**
  * Retry delay after a failure: `5min * 2^attempts`, with `attempts` the value
@@ -100,6 +112,35 @@ export function nextDailySeedAt(now: Date): Date {
   );
   if (at.getTime() <= now.getTime()) {
     at.setUTCDate(at.getUTCDate() + 1);
+  }
+  return at;
+}
+
+/**
+ * The next Monday 04:00 UTC strictly after `now`.
+ *
+ * Strictly, for the same reason `nextDailySeedAt` is: a seed that runs at
+ * exactly its slot must schedule next week's, not re-schedule its own and run
+ * again on the next tick. `getUTCDay()` is 0 for Sunday, so the days-ahead
+ * arithmetic is modulo 7 with a 7 (not 0) when today *is* Monday and the hour
+ * has already passed.
+ */
+export function nextWeeklySeedAt(now: Date): Date {
+  const at = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      WEEKLY_SEED_HOUR_UTC,
+      0,
+      0,
+      0,
+    ),
+  );
+  const daysAhead = (WEEKLY_SEED_WEEKDAY_UTC - at.getUTCDay() + 7) % 7;
+  at.setUTCDate(at.getUTCDate() + daysAhead);
+  if (at.getTime() <= now.getTime()) {
+    at.setUTCDate(at.getUTCDate() + 7);
   }
   return at;
 }
@@ -364,6 +405,32 @@ export async function queuedProjectIds(
   for (const row of rows) {
     if (typeof row.projectId === "string" && row.projectId !== "") {
       ids.add(row.projectId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Every prompt id named by a live `ai_run`, in one query.
+ *
+ * The AI Visibility twin of `queuedProjectIds`, and the weekly seed's guard
+ * against stacking two runs — two lots of real money — on one prompt when a
+ * week's runs have not drained before the next seed fires.
+ */
+export async function queuedPromptIds(db: Db): Promise<Set<string>> {
+  const rows = await db
+    .select({
+      promptId: sql<string | null>`json_extract(${jobs.payloadJson}, '$.promptId')`,
+    })
+    .from(jobs)
+    .where(
+      and(eq(jobs.type, "ai_run"), inArray(jobs.status, [...LIVE_STATUSES])),
+    );
+
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (typeof row.promptId === "string" && row.promptId !== "") {
+      ids.add(row.promptId);
     }
   }
   return ids;
