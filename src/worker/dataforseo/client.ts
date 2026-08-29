@@ -26,15 +26,15 @@ export const DFS_SANDBOX_BASE_URL = "https://sandbox.dataforseo.com/v3/";
 export const DFS_OK_STATUS = 20000;
 
 /**
- * Per-attempt ceiling on one upstream connection. Observed in production
- * (2026-08, search_volume and backlinks/summary): a single connection can hang
- * 60s+ while an immediate retry answers in under a second — the stall is
- * per-connection, not per-query. Two attempts of 30s therefore beat one of
- * 60s. Wall-clock on a network wait; the Workers CPU limit is unaffected.
+ * Per-attempt ceilings on one upstream connection. Two distinct failure modes
+ * observed in production (2026-08): a hung connection that a fresh attempt
+ * beats in under a second (search_volume), and an endpoint that legitimately
+ * computes for 30–60s on a cold target (backlinks/summary). A short first
+ * attempt catches the former without burning a minute; a patient second
+ * attempt accommodates the latter. Wall-clock on a network wait — the Workers
+ * CPU limit is unaffected.
  */
-export const ATTEMPT_TIMEOUT_MS = 30_000;
-/** Attempts per call. Retries happen ONLY when no HTTP response arrived. */
-export const RETRY_ATTEMPTS = 2;
+export const ATTEMPT_TIMEOUTS_MS = [20_000, 60_000] as const;
 
 /**
  * Cache lifetimes from docs/ARCHITECTURE.md, in seconds, passed to KV as
@@ -319,7 +319,9 @@ export function createDataForSeoClient(
      * a 60-second error page.
      */
     let res: Response | null = null;
-    for (let attempt = 1; res === null; attempt++) {
+    for (let attempt = 0; res === null; attempt++) {
+      const attemptTimeout = ATTEMPT_TIMEOUTS_MS[attempt];
+      if (attemptTimeout === undefined) break;
       try {
         res = await fetch(url, {
           method,
@@ -328,15 +330,17 @@ export function createDataForSeoClient(
             "Content-Type": "application/json",
           },
           body: method === "POST" ? JSON.stringify(payload) : undefined,
-          signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+          signal: AbortSignal.timeout(attemptTimeout),
         });
       } catch (err) {
-        if (attempt < RETRY_ATTEMPTS) continue;
+        if (attempt < ATTEMPT_TIMEOUTS_MS.length - 1) continue;
         const name = err instanceof Error ? err.name : "";
         if (name === "TimeoutError" || name === "AbortError") {
+          const totalSeconds =
+            ATTEMPT_TIMEOUTS_MS.reduce((sum, ms) => sum + ms, 0) / 1000;
           throw new ApiException(
             "upstream_timeout",
-            `DataForSEO did not respond within ${(ATTEMPT_TIMEOUT_MS * RETRY_ATTEMPTS) / 1000}s across ${RETRY_ATTEMPTS} attempts (${endpoint}).`,
+            `DataForSEO did not respond within ${totalSeconds}s across ${ATTEMPT_TIMEOUTS_MS.length} attempts (${endpoint}).`,
           );
         }
         // The underlying message is not forwarded — it can carry the request
@@ -346,6 +350,12 @@ export function createDataForSeoClient(
           `Could not reach DataForSEO (${endpoint}).`,
         );
       }
+    }
+    if (res === null) {
+      throw new ApiException(
+        "upstream_error",
+        `Could not reach DataForSEO (${endpoint}).`,
+      );
     }
 
     let envelope: DfsEnvelope<TResult>;
