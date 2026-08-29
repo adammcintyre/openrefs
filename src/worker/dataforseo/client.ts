@@ -53,6 +53,37 @@ export const CACHE_TTL_SECONDS = {
 
 export type CacheTtl = keyof typeof CACHE_TTL_SECONDS;
 
+/**
+ * Where a cached response may be read from and written to.
+ *
+ * `"workspace"` (the default, and the rule) keys under `ws:<id>:` so one
+ * tenant never sees results another tenant paid for.
+ *
+ * `"global"` is the single documented exception from docs/specs/PHASE1.md:
+ * DataForSEO's locations/languages *lists* cost $0 and are not tenant data —
+ * they are the same public reference table for everyone — so caching them once
+ * for the whole deployment saves every workspace re-fetching a 50k-row list.
+ * Permitted only for `GLOBAL_CACHE_ENDPOINTS`; anything else throws.
+ */
+export type CacheScope = "workspace" | "global";
+
+/**
+ * The complete allowlist for `cacheScope: "global"`. Every entry must be a
+ * zero-cost, non-tenant, read-only reference list — that is the whole
+ * justification for stepping outside per-workspace isolation, so an endpoint
+ * that bills, or that varies by who is asking, can never be added.
+ *
+ * Enforced by `assertGlobalCacheAllowed` at request time and pinned by
+ * client.test.ts, which is the guard against this set quietly growing.
+ */
+export const GLOBAL_CACHE_ENDPOINTS: ReadonlySet<string> = new Set([
+  "dataforseo_labs/locations_and_languages",
+  "serp/google/locations",
+  "serp/google/languages",
+  "keywords_data/google_ads/locations",
+  "keywords_data/google_ads/languages",
+]);
+
 export interface DataForSeoCredentials {
   login: string;
   password: string;
@@ -67,6 +98,16 @@ export interface DataForSeoRequest<TPayload = unknown> {
   ttl: CacheTtl;
   /** Bypass a cache hit but still write the fresh response back. */
   fresh?: boolean;
+  /**
+   * DataForSEO's task endpoints are POST; the appendix/list endpoints are GET
+   * with no body. Defaults to POST — the overwhelming majority.
+   */
+  method?: "GET" | "POST";
+  /**
+   * Defaults to `"workspace"`. See `CacheScope`; `"global"` is rejected for
+   * any endpoint outside `GLOBAL_CACHE_ENDPOINTS`.
+   */
+  cacheScope?: CacheScope;
 }
 
 export interface DataForSeoResponse<TResult = unknown> {
@@ -160,6 +201,39 @@ export async function computeCacheKey(
 ): Promise<string> {
   const hash = await sha256Hex(canonicalJson(payload));
   return `ws:${workspaceId}:dfs:${endpoint}:${hash}`;
+}
+
+/**
+ * `meta:dfs:<endpoint>:<sha256 of the canonical payload>` — the deployment-wide
+ * key for allowlisted zero-cost reference lists.
+ *
+ * The `meta:` prefix is doing real work: it is deliberately *not* `ws:`, so the
+ * workspace-deletion prefix sweep cannot touch it (nothing here belongs to a
+ * tenant) and, conversely, a bug that routed tenant data here would be visible
+ * as a key outside every workspace's namespace rather than hiding inside one.
+ */
+export async function computeGlobalCacheKey(
+  endpoint: string,
+  payload: unknown,
+): Promise<string> {
+  const hash = await sha256Hex(canonicalJson(payload));
+  return `meta:dfs:${endpoint}:${hash}`;
+}
+
+/**
+ * The gate on the exception. Called before any global-scope read or write, so
+ * an endpoint that is not on the list cannot reach a shared cache key even if a
+ * caller asks for one.
+ *
+ * @throws ApiException `internal_error` — reaching here is a programming
+ *         mistake in a wrapper, not something a request can provoke.
+ */
+export function assertGlobalCacheAllowed(endpoint: string): void {
+  if (GLOBAL_CACHE_ENDPOINTS.has(endpoint)) return;
+  throw new ApiException(
+    "internal_error",
+    `Refusing to cache ${endpoint} globally: only zero-cost reference lists may leave the per-workspace cache namespace.`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -354,11 +428,26 @@ export function createDataForSeoClient(
     async request<TResult = unknown, TPayload = unknown>(
       req: DataForSeoRequest<TPayload>,
     ): Promise<DataForSeoResponse<TResult>> {
-      const { endpoint, payload, ttl, fresh = false } = req;
+      const {
+        endpoint,
+        payload,
+        ttl,
+        fresh = false,
+        method = "POST",
+        cacheScope = "workspace",
+      } = req;
       const cacheable = ttl !== "none";
+      const global = cacheScope === "global";
 
-      // 1. Key from workspace + endpoint + canonical payload hash.
-      const cacheKey = await computeCacheKey(workspaceId, endpoint, payload);
+      // 0. The exception is checked before anything else touches a key, so an
+      //    endpoint off the allowlist cannot read or write a shared entry.
+      if (global) assertGlobalCacheAllowed(endpoint);
+
+      // 1. Key from workspace + endpoint + canonical payload hash — or, for an
+      //    allowlisted reference list, from endpoint + payload alone.
+      const cacheKey = global
+        ? await computeGlobalCacheKey(endpoint, payload)
+        : await computeCacheKey(workspaceId, endpoint, payload);
 
       // 2. A hit costs nothing and skips the cap entirely.
       if (cacheable && !fresh) {
@@ -375,11 +464,19 @@ export function createDataForSeoClient(
         }
       }
 
-      // 3. Refuse before spending.
-      await assertWithinSpendCap();
+      // 3. Refuse before spending. Skipped for the allowlisted reference
+      //    lists: DataForSEO bills them at $0, and a workspace sitting at its
+      //    cap still has to be able to render a location picker. Same reasoning
+      //    as `balance()` below, and equally narrow — the allowlist is the
+      //    thing keeping it honest.
+      if (!global) await assertWithinSpendCap();
 
       // 4. The call.
-      const envelope = await call<TResult>(endpoint, "POST", payload);
+      const envelope = await call<TResult>(
+        endpoint,
+        method,
+        method === "POST" ? payload : undefined,
+      );
 
       // 5. Meter the real cost *before* interpreting the status: a task that
       //    errors is still billed, and an unrecorded spend is how a cap leaks.

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import { ApiException } from "../http";
 import {
+  assertGlobalCacheAllowed,
   CACHE_TTL_SECONDS,
   canonicalJson,
   computeCacheKey,
+  computeGlobalCacheKey,
   DFS_BASE_URL,
   DFS_SANDBOX_BASE_URL,
+  GLOBAL_CACHE_ENDPOINTS,
 } from "./client";
 
 describe("canonicalJson", () => {
@@ -78,6 +82,96 @@ describe("computeCacheKey", () => {
     const one = await computeCacheKey("a", "e", payload);
     const two = await computeCacheKey("a:dfs:e:x", "e", payload);
     expect(one).not.toBe(two);
+  });
+});
+
+describe("global cache scope", () => {
+  /**
+   * The exception exists for zero-cost, non-tenant reference lists and nothing
+   * else. This list is pinned deliberately: a new entry has to be added here
+   * too, which is the moment to ask whether it really costs $0 and really is
+   * the same answer for every tenant.
+   */
+  it("allowlists exactly the documented zero-cost reference lists", () => {
+    expect([...GLOBAL_CACHE_ENDPOINTS].sort()).toEqual([
+      "dataforseo_labs/locations_and_languages",
+      "keywords_data/google_ads/languages",
+      "keywords_data/google_ads/locations",
+      "serp/google/languages",
+      "serp/google/locations",
+    ]);
+  });
+
+  it("admits every allowlisted endpoint", () => {
+    for (const endpoint of GLOBAL_CACHE_ENDPOINTS) {
+      expect(() => assertGlobalCacheAllowed(endpoint)).not.toThrow();
+    }
+  });
+
+  it("refuses paid endpoints — the ones that carry tenant-paid results", () => {
+    const paid = [
+      "keywords_data/google_ads/search_volume/live",
+      "dataforseo_labs/google/keyword_ideas/live",
+      "dataforseo_labs/google/ranked_keywords/live",
+      "dataforseo_labs/google/domain_rank_overview/live",
+      "serp/google/organic/live/advanced",
+    ];
+    for (const endpoint of paid) {
+      expect(() => assertGlobalCacheAllowed(endpoint)).toThrow(ApiException);
+    }
+  });
+
+  it("refuses near-misses rather than prefix-matching them", () => {
+    // A paid endpoint nested under an allowlisted path must not inherit it.
+    expect(() =>
+      assertGlobalCacheAllowed("serp/google/locations/live/advanced"),
+    ).toThrow(ApiException);
+    expect(() => assertGlobalCacheAllowed("serp/google/locations/")).toThrow(
+      ApiException,
+    );
+    expect(() => assertGlobalCacheAllowed("")).toThrow(ApiException);
+  });
+
+  it("raises internal_error — a wrapper bug, not a user's bad request", () => {
+    try {
+      assertGlobalCacheAllowed("dataforseo_labs/google/keyword_ideas/live");
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).code).toBe("internal_error");
+    }
+  });
+
+  it("keys globals under meta:, outside every workspace's namespace", async () => {
+    const key = await computeGlobalCacheKey("serp/google/locations", []);
+    expect(key).toMatch(/^meta:dfs:serp\/google\/locations:[0-9a-f]{64}$/);
+    // The workspace-deletion sweep is a `ws:` prefix scan; a meta key must be
+    // out of its reach, and must never be mistaken for one workspace's data.
+    expect(key.startsWith("ws:")).toBe(false);
+  });
+
+  it("gives every workspace the same key for the same list", async () => {
+    const once = await computeGlobalCacheKey("serp/google/languages", []);
+    const again = await computeGlobalCacheKey("serp/google/languages", []);
+    expect(once).toBe(again);
+  });
+
+  it("cannot collide with a workspace-scoped key for the same endpoint", async () => {
+    const scoped = await computeCacheKey("ws-1", "serp/google/locations", []);
+    const global = await computeGlobalCacheKey("serp/google/locations", []);
+    expect(scoped).not.toBe(global);
+  });
+
+  it("still separates endpoints and payloads", async () => {
+    const locations = await computeGlobalCacheKey("serp/google/locations", []);
+    const languages = await computeGlobalCacheKey("serp/google/languages", []);
+    expect(locations).not.toBe(languages);
+
+    const empty = await computeGlobalCacheKey("serp/google/locations", []);
+    const withArg = await computeGlobalCacheKey("serp/google/locations", [
+      { country: "GB" },
+    ]);
+    expect(empty).not.toBe(withArg);
   });
 });
 
