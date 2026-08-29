@@ -1,0 +1,18 @@
+# Dependencies / build output
+node_modules/
+dist/
+coverage/
+
+# Local secrets — NEVER commit these
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# Wrangler local state (includes local D1/KV/R2 data)
+.wrangler/
+
+# OS / editor noise
+.DS_Store
+*.local
+.idea/
