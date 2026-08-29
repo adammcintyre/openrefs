@@ -52,6 +52,7 @@ import {
   listSites,
   revokeToken,
 } from "../gsc/api";
+import type { GscConfig } from "../gsc/config";
 import {
   appRedirect,
   callbackRedirectUri,
@@ -349,16 +350,7 @@ gsc.get("/sites", async (c) => {
   await requireProject(db, workspace, project);
 
   const connection = await requireConnection(db, workspace, project);
-  const accessToken = await getAccessToken(
-    {
-      kv: c.env.CACHE,
-      masterKey: c.env.APP_MASTER_KEY,
-      config,
-      workspaceId: workspace,
-      projectId: project,
-    },
-    connection.refreshTokenEnc,
-  );
+  const accessToken = await accessTokenFor(c, config, workspace, project, connection);
 
   const body: GscSitesResponse = {
     sites: await listSites(accessToken),
@@ -384,16 +376,7 @@ gsc.patch("/connection", async (c) => {
   const { property } = await readJson(c, updateGscConnectionSchema);
 
   const connection = await requireConnection(db, workspace, project);
-  const accessToken = await getAccessToken(
-    {
-      kv: c.env.CACHE,
-      masterKey: c.env.APP_MASTER_KEY,
-      config,
-      workspaceId: workspace,
-      projectId: project,
-    },
-    connection.refreshTokenEnc,
-  );
+  const accessToken = await accessTokenFor(c, config, workspace, project, connection);
 
   const sites = await listSites(accessToken);
   if (!sites.some((site) => site.siteUrl === property)) {
@@ -571,16 +554,7 @@ async function reportContext(
     );
   }
 
-  const accessToken = await getAccessToken(
-    {
-      kv: c.env.CACHE,
-      masterKey: c.env.APP_MASTER_KEY,
-      config,
-      workspaceId: workspace,
-      projectId: project,
-    },
-    connection.refreshTokenEnc,
-  );
+  const accessToken = await accessTokenFor(c, config, workspace, project, connection);
 
   return {
     kv: c.env.CACHE,
@@ -590,6 +564,33 @@ async function reportContext(
     property: connection.property,
     range: resolveRange(range, new Date()),
   };
+}
+
+/**
+ * A usable access token for one project's connection.
+ *
+ * A thin wrapper over `getAccessToken`, but worth having: three routes need
+ * the same five-field context, and assembling it in three places is three
+ * chances for one of them to drift — passing the wrong workspace id here would
+ * read and write another tenant's cached token.
+ */
+function accessTokenFor(
+  c: Context<AppEnv>,
+  config: GscConfig,
+  workspaceId: string,
+  projectId: string,
+  connection: { refreshTokenEnc: string },
+): Promise<string> {
+  return getAccessToken(
+    {
+      kv: c.env.CACHE,
+      masterKey: c.env.APP_MASTER_KEY,
+      config,
+      workspaceId,
+      projectId,
+    },
+    connection.refreshTokenEnc,
+  );
 }
 
 /**
