@@ -26,6 +26,7 @@ export const TRACKING_CSV_HEADERS = [
   "change_7d",
   "change_30d",
   "best_position",
+  "ai_overview",
   "ranking_url",
   "checked_on",
 ] as const;
@@ -36,6 +37,20 @@ export type RowStatus = "ranked" | "not_in_top_100" | "awaiting_first_check";
 export function rowStatus(row: TrackedKeywordRow): RowStatus {
   if (row.latest === null) return "awaiting_first_check";
   return row.latest.position === null ? "not_in_top_100" : "ranked";
+}
+
+/**
+ * The AI Overview column, as three values rather than a boolean.
+ *
+ * `aiOverview` is `false` both when the last SERP had no overview and when no
+ * SERP has ever been fetched, so writing the raw boolean would export "no" for
+ * keywords nobody has looked at yet — a measurement we never took. An empty
+ * cell says "unknown", exactly as the position column does, and the `status`
+ * column beside it already names which kind of nothing this row is.
+ */
+export function aiOverviewCell(row: TrackedKeywordRow): "yes" | "no" | null {
+  if (row.latest === null) return null;
+  return row.aiOverview ? "yes" : "no";
 }
 
 export function trackingCsvRows(
@@ -54,6 +69,7 @@ export function trackingCsvRows(
     row.change7d,
     row.change30d,
     row.bestPosition,
+    aiOverviewCell(row),
     row.latest?.url ?? null,
     row.latest?.date ?? null,
   ]);

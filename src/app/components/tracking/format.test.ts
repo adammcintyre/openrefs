@@ -41,6 +41,7 @@ function row(overrides: Partial<TrackedKeywordRow> = {}): TrackedKeywordRow {
     change7d: null,
     change30d: null,
     bestPosition: null,
+    aiOverview: false,
     series: [],
     ...overrides,
   };

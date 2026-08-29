@@ -18,6 +18,7 @@ function row(keyword: string, change7d: number | null): TrackedKeywordRow {
     change7d,
     change30d: null,
     bestPosition: null,
+    aiOverview: false,
     series: [],
   };
 }
