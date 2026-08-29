@@ -70,6 +70,12 @@ const PROJECTS: ProjectListResponse = {
 
 /* ------------------------------ status fixtures ---------------------------- */
 
+/*
+ * Verbatim the body a running dev server returns from
+ * `GET /api/v1/gsc/status` with no GOOGLE_CLIENT_ID configured — the one state
+ * that can be verified live, checked against the real response rather than
+ * imagined. Every fixture below it is typed from the same contract.
+ */
 const UNCONFIGURED: GscStatusResponse = {
   configured: false,
   connected: false,
