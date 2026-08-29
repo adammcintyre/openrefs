@@ -7,6 +7,13 @@
  * Endpoint wrappers per API family (keywords_data, dataforseo_labs, backlinks,
  * on_page, serp, ai_optimization) are sibling files that consume this
  * interface — they never re-implement fetching.
+ *
+ * **Caching is stale-if-error.** Entries are written without a KV
+ * `expirationTtl`; the TTL travels in the payload as `softExpiresAt`, so a
+ * soft-expired entry is still on disk when DataForSEO stops answering and can
+ * be served with `stale: true` rather than becoming an error page. See
+ * `CACHE_MAX_AGE_MS` for what bounds stored lifetime in KV's place, and the
+ * `catch` around the call for the single failure it may absorb.
  */
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -83,10 +90,14 @@ export const ATTEMPT_TIMEOUTS_MS = [20_000, 60_000] as const;
 export const PATIENT_ATTEMPT_TIMEOUTS_MS = [130_000] as const;
 
 /**
- * Cache lifetimes from docs/ARCHITECTURE.md, in seconds, passed to KV as
- * `expirationTtl`. Keys are `ws:<workspaceId>:dfs:<endpoint-hash>` — the
- * workspace prefix is what keeps one tenant's paid results out of another's,
- * and what makes workspace deletion a prefix sweep.
+ * Cache lifetimes from docs/ARCHITECTURE.md, in seconds. Keys are
+ * `ws:<workspaceId>:dfs:<endpoint-hash>` — the workspace prefix is what keeps
+ * one tenant's paid results out of another's, and what makes workspace
+ * deletion a prefix sweep.
+ *
+ * **These are SOFT lifetimes, carried in the payload as `softExpiresAt`, not
+ * KV `expirationTtl`.** See `CACHE_MAX_AGE_MS` for why, and for what bounds
+ * the stored lifetime instead.
  */
 export const CACHE_TTL_SECONDS = {
   /** Search volume, keyword ideas, historical/timeseries endpoints. */
@@ -102,6 +113,26 @@ export const CACHE_TTL_SECONDS = {
 } as const;
 
 export type CacheTtl = keyof typeof CACHE_TTL_SECONDS;
+
+/**
+ * The hard ceiling on how long a cache entry may sit in KV, enforced by
+ * deleting it when a read finds it older than this.
+ *
+ * Entries are written **without** `expirationTtl`, which is what makes
+ * stale-if-error possible at all: KV cannot hand back an entry it has already
+ * evicted, so an expired-by-KV entry is simply gone at the moment we most want
+ * it — when DataForSEO is not answering. Keeping the bytes and expiring them
+ * *logically* (`softExpiresAt`) means a soft-expired entry is still there to
+ * fall back on.
+ *
+ * The cost of that is unbounded storage, which this constant bounds: any entry
+ * read after 90 days is deleted rather than served or refreshed in place. It is
+ * opportunistic on purpose — an entry nobody ever reads again is not worth a
+ * sweep, and workspace deletion clears the whole `ws:<id>:` prefix regardless.
+ * 90 days is comfortably past the longest TTL bucket (30 days), so no entry is
+ * ever dropped while it could still have been served fresh.
+ */
+export const CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 /**
  * Where a cached response may be read from and written to.
@@ -247,6 +278,15 @@ export interface DataForSeoResponse<TResult = unknown> {
   /** USD reported by the API. Zero when served from cache. */
   costUsd: number;
   cached: boolean;
+  /**
+   * True only for a **soft-expired entry served because the refresh timed
+   * out** — the stale-if-error path. `cached` is true alongside it; the pair
+   * reads as "from cache, and older than we would normally serve".
+   *
+   * False for every ordinary cache hit, so a UI chip can say "cached · may be
+   * outdated" exactly when that is true and not one request sooner.
+   */
+  stale: boolean;
   /** DataForSEO's own status for the first task, kept for diagnostics. */
   statusCode: number;
   statusMessage: string;
@@ -394,8 +434,26 @@ interface DfsEnvelope<TResult> {
   tasks?: DfsTask<TResult>[] | null;
 }
 
-/** What we keep in KV. Versioned so the shape can change without stale reads. */
-interface CacheEntry<TResult> {
+/**
+ * What we keep in KV. Versioned so the shape can change without stale reads.
+ *
+ * v2 added `softExpiresAt` and dropped KV's own `expirationTtl` — see
+ * `CACHE_MAX_AGE_MS`. v1 entries still in KV are read as fresh-until-KV-drops-
+ * them, which is exactly what they are: they were written *with* an
+ * `expirationTtl`, so KV is still enforcing their lifetime and nothing here
+ * has to. They age out on their own and are never written again.
+ */
+interface CacheEntryV2<TResult> {
+  v: 2;
+  results: TResult[];
+  statusCode: number;
+  statusMessage: string;
+  cachedAt: number;
+  /** Epoch ms after which a read refreshes rather than serves this entry. */
+  softExpiresAt: number;
+}
+
+interface CacheEntryV1<TResult> {
   v: 1;
   results: TResult[];
   statusCode: number;
@@ -403,7 +461,53 @@ interface CacheEntry<TResult> {
   cachedAt: number;
 }
 
-const CACHE_ENTRY_VERSION = 1;
+type StoredCacheEntry<TResult> = CacheEntryV1<TResult> | CacheEntryV2<TResult>;
+
+const CACHE_ENTRY_VERSION = 2;
+
+/** A stored entry with its soft expiry resolved, whichever version it is. */
+interface ReadCacheEntry<TResult> {
+  results: TResult[];
+  statusCode: number;
+  statusMessage: string;
+  cachedAt: number;
+  softExpiresAt: number;
+}
+
+/**
+ * Normalises whatever KV handed back, or null if it is not an entry we know.
+ *
+ * A v1 entry gets `softExpiresAt: Infinity`: KV is still enforcing its hard
+ * TTL, so while it exists it is fresh. Anything else — a future version, a
+ * hand-edited key, a partial write — reads as a miss rather than throwing on
+ * a page view.
+ */
+export function readCacheEntry<TResult>(
+  raw: unknown,
+): ReadCacheEntry<TResult> | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const entry = raw as Partial<StoredCacheEntry<TResult>>;
+  if (!Array.isArray(entry.results)) return null;
+  if (typeof entry.cachedAt !== "number" || !Number.isFinite(entry.cachedAt)) {
+    return null;
+  }
+
+  const base = {
+    results: entry.results as TResult[],
+    statusCode: typeof entry.statusCode === "number" ? entry.statusCode : 0,
+    statusMessage:
+      typeof entry.statusMessage === "string" ? entry.statusMessage : "",
+    cachedAt: entry.cachedAt,
+  };
+
+  if (entry.v === 1) return { ...base, softExpiresAt: Number.POSITIVE_INFINITY };
+  if (entry.v === 2) {
+    const soft = (entry as CacheEntryV2<TResult>).softExpiresAt;
+    if (typeof soft !== "number" || !Number.isFinite(soft)) return null;
+    return { ...base, softExpiresAt: soft };
+  }
+  return null;
+}
 
 /** `appendix/user_data` — only the field we actually consume. */
 const userDataResultSchema = z.object({
@@ -663,20 +767,46 @@ export function createDataForSeoClient(
         ? await computeGlobalCacheKey(endpoint, payload)
         : await computeCacheKey(workspaceId, endpoint, payload);
 
-      // 2. A hit costs nothing and skips the cap entirely.
+      /*
+       * 2. A hit costs nothing and skips the cap entirely.
+       *
+       * Three outcomes, not two, because entries outlive their TTL now:
+       *   within the soft TTL  → serve it, done;
+       *   past the soft TTL    → keep it as `stale` and refresh below, so a
+       *                          refresh that times out still has something to
+       *                          answer with;
+       *   past CACHE_MAX_AGE_MS → delete it and treat the read as a miss.
+       *
+       * `fresh` skips this block entirely, which is what makes a Refresh
+       * button honest: a fresh request that fails must fail, never quietly
+       * hand back the copy the user just paid to bypass.
+       */
+      const readAt = Date.now();
+      let stale: ReadCacheEntry<TResult> | null = null;
       if (cacheable && !fresh) {
-        const hit = await env.CACHE.get<CacheEntry<TResult>>(cacheKey, "json");
-        if (hit && hit.v === CACHE_ENTRY_VERSION) {
-          await meter(meteredEndpoint, 0, true);
-          return {
-            results: hit.results,
-            // Deliberately not cached: see `DataForSeoResponse.tasks`.
-            tasks: [],
-            costUsd: 0,
-            cached: true,
-            statusCode: hit.statusCode,
-            statusMessage: hit.statusMessage,
-          };
+        const hit = await env.CACHE.get<unknown>(cacheKey, "json");
+        const entry = readCacheEntry<TResult>(hit);
+        if (entry !== null) {
+          if (readAt - entry.cachedAt > CACHE_MAX_AGE_MS) {
+            // Best-effort: entries carry no expirationTtl, so this read is the
+            // only thing that will ever remove it — but failing to tidy up is
+            // not a reason to fail the request.
+            await env.CACHE.delete(cacheKey).catch(() => undefined);
+          } else if (readAt < entry.softExpiresAt) {
+            await meter(meteredEndpoint, 0, true);
+            return {
+              results: entry.results,
+              // Deliberately not cached: see `DataForSeoResponse.tasks`.
+              tasks: [],
+              costUsd: 0,
+              cached: true,
+              stale: false,
+              statusCode: entry.statusCode,
+              statusMessage: entry.statusMessage,
+            };
+          } else {
+            stale = entry;
+          }
         }
       }
 
@@ -688,13 +818,46 @@ export function createDataForSeoClient(
       //    task results the workspace has already paid for.
       if (!global && !spendCapExempt) await assertWithinSpendCap();
 
-      // 4. The call.
-      const envelope = await call<TResult>(
-        endpoint,
-        method,
-        method === "POST" ? payload : undefined,
-        timeoutsMs,
-      );
+      /*
+       * 4. The call — and the one failure a stale entry may absorb.
+       *
+       * `upstream_timeout` ONLY. That code means the request never produced a
+       * response, so nothing was charged and nothing about the workspace has
+       * changed: yesterday's answer is strictly better than an error page.
+       * Every other failure is a fact the caller must see —
+       * `spend_cap_exceeded` (402) and `no_credentials` (409) are decisions
+       * about this workspace that a cached row would hide, and an
+       * `upstream_error` means DataForSEO answered and refused. Serving stale
+       * on those would turn "you are over your cap" into "here is some data",
+       * which is the wrong answer to a question about money.
+       */
+      let envelope: DfsEnvelope<TResult>;
+      try {
+        envelope = await call<TResult>(
+          endpoint,
+          method,
+          method === "POST" ? payload : undefined,
+          timeoutsMs,
+        );
+      } catch (err) {
+        if (
+          stale !== null &&
+          err instanceof ApiException &&
+          err.code === "upstream_timeout"
+        ) {
+          await meter(meteredEndpoint, 0, true);
+          return {
+            results: stale.results,
+            tasks: [],
+            costUsd: 0,
+            cached: true,
+            stale: true,
+            statusCode: stale.statusCode,
+            statusMessage: stale.statusMessage,
+          };
+        }
+        throw err;
+      }
 
       // 5. Meter the real cost *before* interpreting the status: a task that
       //    errors is still billed, and an unrecorded spend is how a cap leaks.
@@ -712,21 +875,36 @@ export function createDataForSeoClient(
       const statusMessage =
         first?.status_message ?? envelope.status_message ?? "";
 
-      // 6. Cache, unless this endpoint is in the "none" bucket.
+      /*
+       * 6. Cache, unless this endpoint is in the "none" bucket.
+       *
+       * **No `expirationTtl`.** The TTL travels inside the payload as
+       * `softExpiresAt` instead, so a soft-expired entry is still on disk when
+       * a refresh times out. `CACHE_MAX_AGE_MS`, checked on read, is what
+       * bounds the stored lifetime in its place.
+       */
       if (cacheable) {
-        const entry: CacheEntry<TResult> = {
+        const writtenAt = Date.now();
+        const entry: CacheEntryV2<TResult> = {
           v: CACHE_ENTRY_VERSION,
           results,
           statusCode,
           statusMessage,
-          cachedAt: Date.now(),
+          cachedAt: writtenAt,
+          softExpiresAt: writtenAt + CACHE_TTL_SECONDS[ttl] * 1000,
         };
-        await env.CACHE.put(cacheKey, JSON.stringify(entry), {
-          expirationTtl: CACHE_TTL_SECONDS[ttl],
-        });
+        await env.CACHE.put(cacheKey, JSON.stringify(entry));
       }
 
-      return { results, tasks, costUsd, cached: false, statusCode, statusMessage };
+      return {
+        results,
+        tasks,
+        costUsd,
+        cached: false,
+        stale: false,
+        statusCode,
+        statusMessage,
+      };
     },
 
     async balance(): Promise<{ balanceUsd: number }> {

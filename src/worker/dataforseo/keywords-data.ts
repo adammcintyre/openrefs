@@ -123,6 +123,7 @@ export function createKeywordsDataApi(
         keywords: response.results.map(toKeyword),
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
   };

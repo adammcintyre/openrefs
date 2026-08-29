@@ -92,6 +92,20 @@ export interface ResultMeta {
   /** USD billed for this response. Always 0 when `cached` is true. */
   costUsd: number;
   cached: boolean;
+  /**
+   * True when this answer came from a cache entry that had already passed its
+   * normal lifetime, served because refreshing it timed out upstream.
+   *
+   * `cached` is true alongside it, so the pair reads as "from cache, and older
+   * than we would normally serve" — a chip saying "cached · may be outdated"
+   * is the intended treatment. It is never set because a request was merely
+   * slow, and never on a `fresh` request, which must fail rather than quietly
+   * return the copy the caller paid to bypass.
+   *
+   * Optional and additive: absent and `false` mean the same thing, so every
+   * response predating this field stays valid. Read it as `stale ?? false`.
+   */
+  stale?: boolean;
 }
 
 /** One DataForSEO endpoint's slice of a month's spend. */

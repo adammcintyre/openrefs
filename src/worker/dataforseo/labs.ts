@@ -971,6 +971,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1017,6 +1018,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1066,6 +1068,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1114,6 +1117,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1152,6 +1156,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         }),
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1185,6 +1190,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         items: wrapper.items.map(toKeywordIntent),
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1235,6 +1241,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1276,6 +1283,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         raw,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1313,6 +1321,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1361,6 +1370,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1409,6 +1419,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1463,6 +1474,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -1522,6 +1534,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
   };

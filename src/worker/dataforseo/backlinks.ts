@@ -662,6 +662,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         raw,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -712,6 +713,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         itemsCount: wrapper.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -728,6 +730,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         itemsCount: wrapper.result.items_count,
         costUsd: wrapper.costUsd,
         cached: wrapper.cached,
+        stale: wrapper.stale,
       };
     },
 
@@ -740,6 +743,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         itemsCount: wrapper.result.items_count,
         costUsd: wrapper.costUsd,
         cached: wrapper.cached,
+        stale: wrapper.stale,
       };
     },
 
@@ -782,6 +786,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         itemsCount: parsed.data.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -821,6 +826,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         itemsCount: parsed.data.items_count,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
   };
@@ -835,6 +841,7 @@ async function requestReferring(
   result: z.infer<typeof listResultSchema>;
   costUsd: number;
   cached: boolean;
+  stale: boolean;
 }> {
   const {
     target,
@@ -875,6 +882,7 @@ async function requestReferring(
     result: parseListResult(response.results[0], endpoint),
     costUsd: response.costUsd,
     cached: response.cached,
+    stale: response.stale,
   };
 }
 

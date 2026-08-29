@@ -348,6 +348,7 @@ export function createAiOptimizationApi(
         raw: response.results[0],
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 

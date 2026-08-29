@@ -153,6 +153,13 @@ export interface WrappedMeta {
   /** USD billed for this call. Zero on a cache hit. */
   costUsd: number;
   cached: boolean;
+  /**
+   * True when this came from a **soft-expired** entry served because the
+   * refresh timed out (see `CACHE_MAX_AGE_MS` in client.ts). Optional so that
+   * a wrapper predating stale-if-error still type-checks; absent and `false`
+   * mean the same thing, and callers must treat it as `stale ?? false`.
+   */
+  stale?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

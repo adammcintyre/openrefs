@@ -31,6 +31,7 @@ function fakeClient(result: unknown): {
         tasks: [],
         costUsd: 0.024,
         cached: false,
+        stale: false,
         statusCode: 20000,
         statusMessage: "Ok.",
       };

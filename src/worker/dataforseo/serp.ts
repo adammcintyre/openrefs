@@ -324,7 +324,11 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
       return toOrganicSerpResult(
         GOOGLE_ORGANIC_LIVE_ADVANCED,
         response.results[0],
-        { costUsd: response.costUsd, cached: response.cached },
+        {
+          costUsd: response.costUsd,
+          cached: response.cached,
+          stale: response.stale,
+        },
       );
     },
 
@@ -400,6 +404,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         rejected,
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -427,7 +432,12 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         });
       }
 
-      return { tasks, costUsd: response.costUsd, cached: response.cached };
+      return {
+        tasks,
+        costUsd: response.costUsd,
+        cached: response.cached,
+        stale: response.stale,
+      };
     },
 
     async googleOrganicTaskGet(taskId) {
@@ -476,6 +486,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         serp: toOrganicSerpResult(endpoint, response.results[0], {
           costUsd: response.costUsd,
           cached: response.cached,
+          stale: response.stale,
         }),
       };
     },
@@ -529,6 +540,7 @@ function toOrganicSerpResult(
     items: pickOrganic(data.items),
     costUsd: meta.costUsd,
     cached: meta.cached,
+    stale: meta.stale,
   };
 }
 

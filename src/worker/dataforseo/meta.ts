@@ -142,6 +142,7 @@ export function createMetaApi(client: DataForSeoClient): MetaApi {
         locations: locations.sort(byName),
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
 
@@ -168,6 +169,7 @@ export function createMetaApi(client: DataForSeoClient): MetaApi {
         languages: languages.sort(byName),
         costUsd: response.costUsd,
         cached: response.cached,
+        stale: response.stale,
       };
     },
   };

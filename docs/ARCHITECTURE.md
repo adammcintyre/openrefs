@@ -61,7 +61,8 @@ docs/              this file, PLAN.md, feature specs
 - Credentials resolve per workspace (decrypted from D1); dev fallback from env (`DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD` in `.dev.vars`).
 - Workspace credentials encrypted AES-256-GCM with `APP_MASTER_KEY` (WebCrypto), stored as `iv:ciphertext` base64.
 - Every response includes `cost` — the client records it to `api_usage` (cached hits recorded with cost 0, cached=1), checks the workspace spend cap before spending, and exposes `GET /api/v1/usage` + a balance passthrough (`appendix/user_data`).
-- Cache TTLs (KV `expirationTtl`): search volume & keyword ideas 30d; related/suggestions 14d; Labs SERPs, ranked keywords, domain overviews, backlink summaries 7d; historical/timeseries endpoints 30d; live SERP refreshes 24h; balance/user_data never cached. A `fresh: true` request param bypasses cache (still writes it).
+- Cache TTLs: search volume & keyword ideas 30d; related/suggestions 14d; Labs SERPs, ranked keywords, domain overviews, backlink summaries 7d; historical/timeseries endpoints 30d; live SERP refreshes 24h; balance/user_data never cached. A `fresh: true` request param bypasses cache (still writes it).
+- **Stale-if-error (Phase 7).** Those TTLs are *soft*: entries are written with no KV `expirationTtl` and carry `softExpiresAt` in the payload. A soft-expired entry is refreshed normally, but when the refresh times out (`upstream_timeout` only — never a spend-cap or credential refusal, and never on a `fresh` request) the stale copy is served with `stale: true` in `ResultMeta`. Stored lifetime is bounded by deleting entries older than 90 days when a read finds them.
 
 ## Design tokens — "Lush Forest"
 
