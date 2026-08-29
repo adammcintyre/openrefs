@@ -6,7 +6,14 @@
  * billed DataForSEO call, so switching tabs is what authorises the spend for
  * that tab, and opening the page does not quietly fetch all three.
  */
-import { Download, FolderPlus, SearchX, SlidersHorizontal, X } from "lucide-react";
+import {
+  Download,
+  FolderPlus,
+  SearchX,
+  SlidersHorizontal,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import {
@@ -27,6 +34,7 @@ import type { MarketSelection } from "../../components/keywords/market";
 import { useKeywordList } from "../../components/keywords/queries";
 import type { KeywordToAdd } from "../../components/keywords/queries";
 import { SerpPanel } from "../../components/serp-panel";
+import { TrackKeywordsDialog } from "../../components/tracking/track-keywords-dialog";
 import { Button, EmptyState } from "../../components/ui";
 import { downloadCsv } from "../../lib/csv";
 import type { KeywordRow } from "../../../shared/keywords";
@@ -57,6 +65,13 @@ export function KeywordTabPanel({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [serpRow, setSerpRow] = useState<KeywordRow | null>(null);
   const [addTargets, setAddTargets] = useState<KeywordToAdd[] | null>(null);
+  /**
+   * Phase 3 retrofit: the keywords queued for "Track in a project". Held as
+   * plain strings rather than rows because a tracked keyword carries none of
+   * the research metrics — volume and difficulty belong to a collection
+   * snapshot, not to a rank check.
+   */
+  const [trackTargets, setTrackTargets] = useState<string[] | null>(null);
 
   useApiErrorToast(query.error, `Could not load ${TAB_LABELS[tab].toLowerCase()}`);
 
@@ -108,6 +123,10 @@ export function KeywordTabPanel({
 
   const onAddToCollection = useCallback((targets: KeywordRow[]) => {
     setAddTargets(toKeywordsToAdd(targets));
+  }, []);
+
+  const onTrack = useCallback((targets: KeywordRow[]) => {
+    setTrackTargets(targets.map((row) => row.keyword));
   }, []);
 
   const selectedRows = useMemo(
@@ -182,6 +201,14 @@ export function KeywordTabPanel({
             </Button>
             <Button
               size="sm"
+              variant="secondary"
+              onClick={() => onTrack(selectedRows)}
+            >
+              <TrendingUp className="size-3.5" aria-hidden="true" />
+              Track
+            </Button>
+            <Button
+              size="sm"
               variant="ghost"
               onClick={() => setSelected(new Set())}
             >
@@ -201,6 +228,7 @@ export function KeywordTabPanel({
         onToggleAll={onToggleAll}
         onViewSerp={onViewSerp}
         onAddToCollection={onAddToCollection}
+        onTrack={onTrack}
         emptyState={
           filtersActive && loadedRows.length > 0 ? (
             <EmptyState
@@ -251,6 +279,13 @@ export function KeywordTabPanel({
         open={addTargets !== null}
         onClose={() => setAddTargets(null)}
         keywords={addTargets ?? []}
+      />
+
+      <TrackKeywordsDialog
+        workspaceId={workspaceId}
+        open={trackTargets !== null}
+        onClose={() => setTrackTargets(null)}
+        keywords={trackTargets ?? []}
       />
     </div>
   );

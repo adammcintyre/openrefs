@@ -18,7 +18,7 @@
  *    undefined for sorting; the cell reads `row.original` so it can still tell
  *    the two apart and render an em dash.
  */
-import { ExternalLink, FolderPlus } from "lucide-react";
+import { ExternalLink, FolderPlus, TrendingUp } from "lucide-react";
 import { createContext, useContext } from "react";
 
 import type { KeywordRow } from "../../../shared/keywords";
@@ -41,6 +41,13 @@ interface KeywordTableContext {
   onToggleAll: (checked: boolean) => void;
   onViewSerp: (row: KeywordRow) => void;
   onAddToCollection: (rows: KeywordRow[]) => void;
+  /**
+   * "Track in a project" (Phase 3 retrofit). Optional so the table keeps
+   * working for any caller that has no project context to offer — the action
+   * is omitted rather than rendered disabled, because a Track button that
+   * cannot track is not a useful thing to show.
+   */
+  onTrack?: (rows: KeywordRow[]) => void;
 }
 
 const RowContext = createContext<KeywordTableContext | null>(null);
@@ -102,7 +109,7 @@ function SelectCell({ keyword }: { keyword: string }) {
 }
 
 function ActionsCell({ row }: { row: KeywordRow }) {
-  const { onViewSerp, onAddToCollection } = useRowContext();
+  const { onViewSerp, onAddToCollection, onTrack } = useRowContext();
   return (
     <div className="flex items-center justify-end gap-1">
       <Button
@@ -123,6 +130,17 @@ function ActionsCell({ row }: { row: KeywordRow }) {
         <FolderPlus className="size-3.5" aria-hidden="true" />
         Save
       </Button>
+      {onTrack ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onTrack([row])}
+          aria-label={`Track ${row.keyword} in a project`}
+        >
+          <TrendingUp className="size-3.5" aria-hidden="true" />
+          Track
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -187,6 +205,7 @@ export function KeywordTable({
   onToggleAll,
   onViewSerp,
   onAddToCollection,
+  onTrack,
   emptyState,
 }: {
   rows: ReadonlyArray<KeywordRow>;
@@ -198,11 +217,21 @@ export function KeywordTable({
   onToggleAll: (checked: boolean) => void;
   onViewSerp: (row: KeywordRow) => void;
   onAddToCollection: (rows: KeywordRow[]) => void;
+  /** Omit to hide the Track action entirely. */
+  onTrack?: (rows: KeywordRow[]) => void;
   emptyState?: React.ReactNode;
 }) {
   return (
     <RowContext.Provider
-      value={{ rows, selected, onToggle, onToggleAll, onViewSerp, onAddToCollection }}
+      value={{
+        rows,
+        selected,
+        onToggle,
+        onToggleAll,
+        onViewSerp,
+        onAddToCollection,
+        onTrack,
+      }}
     >
       <DataTable
         columns={columns}
