@@ -137,6 +137,21 @@ export function GapAnalysisPage() {
   const total = query.data?.pages[0]?.totalCount ?? null;
   const filterCount = activeGapFilterCount(filters);
 
+  /**
+   * Rows this comparison fetched and then dropped because they did not match
+   * the mode.
+   *
+   * Worth surfacing because a mode filter can legitimately empty a whole page:
+   * `missing` needs *every* competitor to rank, which against unrelated rivals
+   * is rare. Without this number, "0 rows" next to a total of 51 reads as a
+   * broken screen rather than as "none of the first 20 qualified".
+   */
+  const filteredOut = useMemo(
+    () =>
+      (query.data?.pages ?? []).reduce((sum, page) => sum + page.filteredOut, 0),
+    [query.data],
+  );
+
   const applySearch = useCallback(
     (next: GapSubmit) => {
       writeLastMarket(activeWorkspaceId, {
@@ -415,29 +430,51 @@ export function GapAnalysisPage() {
       />
 
       {/*
-        "Load more" is a purchase, not a scroll: each press is another billed
-        request per competitor, so it stays an explicit button.
+        The pager stays available even when this page matched nothing, because
+        paging runs against the *unfiltered* set: a `missing` page can drop all
+        fifty of its rows and the next fifty can still hold matches. Hiding the
+        button there would strand the user on an empty table with more results
+        sitting behind it.
+
+        "Load more" is a purchase, not a scroll — each press is another billed
+        request per competitor — so it stays an explicit button.
       */}
-      {rows.length > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground" aria-live="polite">
-            {total === null
-              ? `${formatCount(rows.length)} rows loaded`
-              : `${formatCount(rows.length)} shown of ${formatCount(total)} compared`}
-          </p>
-          {query.hasNextPage ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={query.isFetchingNextPage}
-              onClick={() => void query.fetchNextPage()}
-              title="Fetches the next page from DataForSEO — one call per competitor."
-            >
-              Load {PAGE_SIZE} more
-            </Button>
-          ) : (
-            <span className="text-xs text-muted-foreground">Everything loaded</span>
-          )}
+      {rows.length > 0 || query.hasNextPage ? (
+        <div className="flex flex-col gap-2">
+          {filteredOut > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {`${formatCount(filteredOut)} of the ${formatCount(
+                rows.length + filteredOut,
+              )} keywords fetched didn't match ${MODE_LABELS[search.mode]} and aren't shown${
+                query.hasNextPage
+                  ? " — paging works through everything these domains rank for, so the next page may hold more."
+                  : "."
+              }`}
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {total === null
+                ? `${formatCount(rows.length)} rows loaded`
+                : `${formatCount(rows.length)} shown of ${formatCount(total)} compared`}
+            </p>
+            {query.hasNextPage ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={query.isFetchingNextPage}
+                onClick={() => void query.fetchNextPage()}
+                title="Fetches the next page from DataForSEO — one call per competitor."
+              >
+                Load {PAGE_SIZE} more
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Everything loaded
+              </span>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

@@ -122,6 +122,20 @@ function gapResponse(mode: GapKeywordsResponse["mode"]): GapKeywordsResponse {
   };
 }
 
+/**
+ * A page where the mode filter dropped everything — captured from the live API,
+ * which really does answer `missing` against unrelated rivals with 0 of 20 rows
+ * kept and 51 still to page through. The screen must not read as "no results".
+ */
+const ALL_FILTERED: GapKeywordsResponse = {
+  ...gapResponse("weak"),
+  items: [],
+  itemsCount: 0,
+  filteredOut: 20,
+  totalCount: 51,
+  limit: 20,
+};
+
 function seededClient(): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -129,22 +143,25 @@ function seededClient(): QueryClient {
   client.setQueryData(["workspaces"], WORKSPACES);
   client.setQueryData(["meta", "locations", WORKSPACE_ID], LOCATIONS);
 
+  const key = (mode: string) => [
+    "gap",
+    "keywords",
+    WORKSPACE_ID,
+    TARGET,
+    COMPETITORS.join(","),
+    2826,
+    "en",
+    mode,
+    {},
+  ];
+
   for (const mode of ["missing", "all"] as const) {
-    client.setQueryData(
-      [
-        "gap",
-        "keywords",
-        WORKSPACE_ID,
-        TARGET,
-        COMPETITORS.join(","),
-        2826,
-        "en",
-        mode,
-        {},
-      ],
-      { pages: [gapResponse(mode)], pageParams: [0] },
-    );
+    client.setQueryData(key(mode), {
+      pages: [gapResponse(mode)],
+      pageParams: [0],
+    });
   }
+  client.setQueryData(key("weak"), { pages: [ALL_FILTERED], pageParams: [0] });
   return client;
 }
 
@@ -243,5 +260,31 @@ describe("mode tabs", () => {
     for (const label of ["Missing", "Weak", "Untapped", "All"]) {
       expect(html).toContain(`>${label}</button>`);
     }
+  });
+});
+
+/**
+ * Regression, from a live run: `missing` against unrelated rivals returned 0
+ * rows, 20 filtered out and 51 still to come. Paging runs against the
+ * *unfiltered* set, so the next page can hold matches — hiding the pager here
+ * would strand the user on an empty table with results sitting behind it.
+ */
+describe("a page the mode filtered empty", () => {
+  const html = render(`${COMPARISON}&mode=weak`);
+
+  it("still offers the next page", () => {
+    // The label is interpolated, so SSR splits it with comment markers; the
+    // button's title is the stable thing to assert on.
+    expect(html).toContain(
+      "Fetches the next page from DataForSEO — one call per competitor.",
+    );
+  });
+
+  it("explains the empty page rather than implying there is nothing", () => {
+    expect(html).toContain(
+      "20 of the 20 keywords fetched didn&#x27;t match Weak",
+    );
+    expect(html).toContain("the next page may hold more");
+    expect(html).toContain("0 shown of 51 compared");
   });
 });
