@@ -27,7 +27,7 @@
  * the two OAuth legs additionally require a *human* session: they mint and
  * consume a token bound to a `userId`, which an API key does not have.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -389,7 +389,7 @@ gsc.patch("/connection", async (c) => {
   await db
     .update(gscConnections)
     .set({ property })
-    .where(eq(gscConnections.projectId, project));
+    .where(connectionScope(db, workspace, project));
 
   const body: GscConnectionResponse = { connected: true, property };
   return c.json(body);
@@ -422,7 +422,7 @@ gsc.delete("/connection", async (c) => {
     // Undecryptable token: nothing to revoke. The row still goes.
   }
 
-  await db.delete(gscConnections).where(eq(gscConnections.projectId, project));
+  await db.delete(gscConnections).where(connectionScope(db, workspace, project));
   await clearConnectionCache(c.env.CACHE, workspace, project);
 
   const body: GscDisconnectedResponse = { disconnected: true, revoked };
@@ -617,6 +617,39 @@ async function requireProject(
     throw new ApiException("not_found", "No such project.");
   }
   return row;
+}
+
+/**
+ * The predicate every write to `gsc_connections` runs under:
+ *
+ *     project_id = ?
+ *     AND project_id IN (SELECT id FROM projects WHERE workspace_id = ?)
+ *
+ * The project id alone is enough today, because `requireProject` has already
+ * proven it belongs to this workspace by the time either write runs. That is
+ * exactly the kind of correctness that stops being true quietly — a handler
+ * reordered, a guard moved into a branch — and the statement itself would carry
+ * no trace of the tenant it was supposed to be scoped to.
+ *
+ * So the scope is repeated on the write, the same way `routes/projects.ts`
+ * repeats `workspace_id` on its UPDATE and DELETE rather than trusting the
+ * SELECT that authorised them. `gsc_connections` has no workspace column of its
+ * own, so the subquery through `projects` is the only way to express it; the
+ * `project_id` equality stays as the first predicate so SQLite can still use
+ * the primary key. Behaviour is unchanged — this can only ever match the row
+ * the equality already matched.
+ */
+function connectionScope(db: Db, workspaceId: string, projectId: string) {
+  return and(
+    eq(gscConnections.projectId, projectId),
+    inArray(
+      gscConnections.projectId,
+      db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.workspaceId, workspaceId)),
+    ),
+  );
 }
 
 export default gsc;
