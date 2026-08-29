@@ -164,7 +164,8 @@ keywords.get("/overview", async (c) => {
   // the most recent ones and the shared type's oldest-first contract holds
   // regardless of upstream order.
   const monthly = [...(row?.monthlySearches ?? [])].sort(
-    (a, b) => a.year - b.year || a.month - b.month,
+    (a, b) =>
+      (a.year ?? 0) - (b.year ?? 0) || (a.month ?? 0) - (b.month ?? 0),
   );
   const recent = monthly.slice(-HISTORY_MONTHS);
 
