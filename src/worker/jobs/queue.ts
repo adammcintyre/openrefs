@@ -27,7 +27,7 @@ export type JobType = (typeof JOB_TYPES)[number];
  * done is more ticks, not a bigger batch — the cron fires every five minutes
  * and an unfinished backlog simply carries.
  */
-export const SWEEP_BATCH_SIZE = 10;
+export const SWEEP_BATCH_SIZE = 5;
 
 /**
  * How long a claimed job is assumed to be running before another sweep may

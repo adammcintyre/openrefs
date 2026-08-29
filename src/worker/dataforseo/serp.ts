@@ -419,6 +419,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         // Free, and exempt so a workspace at its cap can still collect SERPs
         // it has already paid for.
         spendCapExempt: true,
+        resultsPrepaid: true,
       });
 
       const tasks: ReadyTask[] = [];
@@ -443,6 +444,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         method: "GET",
         ttl: "none",
         spendCapExempt: true,
+        resultsPrepaid: true,
         // The id stays in the URL; the meter records the family.
         meterAs: GOOGLE_ORGANIC_TASK_GET,
         // "Task Handed" / "Task In Queue" are the normal answer while the

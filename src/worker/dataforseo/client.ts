@@ -165,6 +165,16 @@ export interface DataForSeoRequest<TPayload = unknown> {
    * billing shows up in the usage report rather than hiding here.
    */
   spendCapExempt?: boolean;
+  /**
+   * The spend for this call was already metered when its task was POSTED —
+   * any `cost` echoed on this response is informational, so it is recorded as
+   * $0 to keep the meter equal to what DataForSEO actually bills. Their docs
+   * state task retrieval is free, yet `task_get` echoes the task's original
+   * price (observed live 2026-08-29: a $0.006 post echoed $0.006 again on
+   * get, doubling recorded spend). Use ONLY on retrieval endpoints for
+   * already-posted tasks; the usage row is still written.
+   */
+  resultsPrepaid?: boolean;
 }
 
 /**
@@ -561,6 +571,7 @@ export function createDataForSeoClient(
         cacheScope = "workspace",
         okTaskStatusCodes = [],
         spendCapExempt = false,
+        resultsPrepaid = false,
         meterAs,
       } = req;
       // The cache key still uses the real path — two task ids are two
@@ -613,7 +624,9 @@ export function createDataForSeoClient(
 
       // 5. Meter the real cost *before* interpreting the status: a task that
       //    errors is still billed, and an unrecorded spend is how a cap leaks.
-      const costUsd = toFiniteNumber(envelope.cost);
+      //    Prepaid retrievals meter $0 — their cost was recorded at post time
+      //    and the echoed figure would double-count (see `resultsPrepaid`).
+      const costUsd = resultsPrepaid ? 0 : toFiniteNumber(envelope.cost);
       await meter(meteredEndpoint, costUsd, false);
 
       assertOk(endpoint, envelope, okTaskStatusCodes);

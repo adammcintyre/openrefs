@@ -24,7 +24,7 @@ Conventions from docs/specs/PHASE1.md carry over (scoping, guards, wrappers, doc
 ## UI — Rank Tracking (`/app/rank-tracking`)
 
 Project picker empty-state → tracking view:
-- Header: project name/domain, "last checked" timestamp, keyword count, Check now button (admin, with cost hint ≈ $0.0006/keyword), Add keywords button (dialog: textarea one-per-line, device select, uses project location/language with per-batch override).
+- Header: project name/domain, "last checked" timestamp, keyword count, Check now button (admin, with cost hint ≈ $0.006/keyword (depth-100; DataForSEO re-based SERP billing 2025-09)), Add keywords button (dialog: textarea one-per-line, device select, uses project location/language with per-batch override).
 - MetricCards: tracked keywords, avg position, top-10 count, movement (net Δ7d).
 - DataTable: keyword, device Badge, position (— when unranked), Δ1d / Δ7d / Δ30d (coloured, down-is-good for position), best position, ranking URL (path, full on title), 30-day inline sparkline (add a tiny `Sparkline` to components/charts/ if none exists — no axes, single series, ~120×28), remove action; multi-select remove; CSV of loaded rows.
 - Movers panel: top 5 gainers + top 5 losers over 7d.
