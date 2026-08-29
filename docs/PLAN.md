@@ -37,9 +37,13 @@ OnPage API task lifecycle (post → poll via jobs → ingest), issue taxonomy ma
 
 ## Phase 5 — Search Console
 
+**Status: shipped 2026-08-29 (v0.6.0; Google OAuth client pending operator setup).**
+
 Google OAuth (webmasters scope), property binding per project, opportunity reports: high-impression/low-CTR, positions 5–20 ("striking distance"), cannibalization, GSC-actual vs estimated overlay. Self-host: user supplies own OAuth client (guide).
 
 ## Phase 6 — AI Visibility
+
+**Status: shipped 2026-08-29 (v0.6.0).**
 
 DataForSEO AI Optimization API: prompt sets per project, scheduled runs across engines, mention/citation tracking, share-of-voice charts; AI Overview presence flags on tracked keywords.
 

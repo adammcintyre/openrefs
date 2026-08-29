@@ -147,7 +147,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Track whether AI engines mention and cite your site across a set of prompts.",
         phase: 6,
-        live: false,
+        live: true,
         icon: Sparkles,
       },
     ],
