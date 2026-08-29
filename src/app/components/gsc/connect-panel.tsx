@@ -12,16 +12,27 @@
  * `fetch`: the route answers 302 to Google's consent screen, and Google refuses
  * to be framed or fetched cross-origin. See `gscConnectUrl` in queries.ts.
  *
+ * Because it is a navigation, there is no response to catch: whatever
+ * `/gsc/connect` answers is what the browser renders. If the deployment lost
+ * its Google client since this page loaded — an operator rotating secrets while
+ * a tab sat open — that route answers 409 with a JSON error body, and the user
+ * would be dumped on raw JSON with no way back. So the button re-checks status
+ * before handing the tab over. It is one cheap read (status answers from D1 and
+ * KV, never Google), and when it comes back `configured: false` the parent
+ * switches to the setup card on its own, because both are reading the same
+ * query.
+ *
  * **Members get a sentence, not a disabled button.** Connecting needs the admin
  * role server-side. A greyed-out control with no explanation is worse than no
  * control at all — it looks like a bug in the app rather than a boundary in the
  * workspace.
  */
 import { LinkIcon, ShieldAlert } from "lucide-react";
+import { useState } from "react";
 
 import type { Project } from "../../../shared/projects";
 import { Button, Card } from "../ui";
-import { startGscConnect } from "./queries";
+import { startGscConnect, useGscStatus } from "./queries";
 
 export function GscConnectPanel({
   workspaceId,
@@ -36,6 +47,27 @@ export function GscConnectPanel({
   canAdminister: boolean;
 }) {
   const Icon = broken ? ShieldAlert : LinkIcon;
+  const status = useGscStatus(workspaceId, project.id);
+  const [leaving, setLeaving] = useState(false);
+
+  async function connect() {
+    setLeaving(true);
+    try {
+      const fresh = await status.refetch();
+      // Still configured (or the check itself failed — in which case let the
+      // navigation happen and the server give the real answer).
+      if (fresh.data?.configured !== false) {
+        startGscConnect(workspaceId, project.id);
+        return;
+      }
+    } catch {
+      startGscConnect(workspaceId, project.id);
+      return;
+    }
+    // configured: false now. The parent reads the same query, so it has
+    // already re-rendered into the setup card behind this.
+    setLeaving(false);
+  }
 
   return (
     <Card className="p-6">
@@ -88,7 +120,7 @@ export function GscConnectPanel({
           {canAdminister ? (
             <>
               <div className="mt-2">
-                <Button onClick={() => startGscConnect(workspaceId, project.id)}>
+                <Button onClick={() => void connect()} loading={leaving}>
                   <LinkIcon className="size-4" aria-hidden="true" />
                   {broken
                     ? "Reconnect Google Search Console"
