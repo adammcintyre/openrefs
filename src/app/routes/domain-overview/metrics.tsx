@@ -116,7 +116,9 @@ export function DomainMetrics({
                 variant="neutral"
                 title="What this organic traffic would cost to buy as ads each month."
               >
-                {formatMoney(organic.trafficValueUsd)}/mo value
+                {/* One interpolation, not two adjacent nodes: React splits
+                    those with a comment marker, which breaks copy-paste. */}
+                {`${formatMoney(organic.trafficValueUsd)}/mo value`}
               </Badge>
             )
           }

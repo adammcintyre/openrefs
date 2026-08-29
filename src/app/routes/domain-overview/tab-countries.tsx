@@ -142,7 +142,7 @@ export function CountriesTab({
           description={`Checks ${search.target} across ten major markets — the US, UK, Germany, France, Spain, Italy, Australia, Canada, the Netherlands and India. That is about ten DataForSEO calls, so it runs only when you ask.`}
           action={
             <Button onClick={onRequest}>
-              Analyze countries · {COUNTRIES_COST_HINT}
+              {`Analyze countries · ${COUNTRIES_COST_HINT}`}
             </Button>
           }
         />

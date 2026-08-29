@@ -20,6 +20,7 @@ import {
   formatTraffic,
 } from "../../components/domains/format";
 import {
+  Badge,
   Button,
   DataTable,
   EmptyState,
@@ -70,11 +71,24 @@ export function CompetitorsTab({
         id: "domain",
         header: "Competitor",
         sortFn: "text",
-        cell: (info) => (
-          <span className="font-medium text-foreground">
-            {info.getValue() ?? EM_DASH}
-          </span>
-        ),
+        cell: (info) => {
+          const domain = info.getValue();
+          return (
+            <span className="flex items-center gap-2">
+              <span className="font-medium text-foreground">
+                {domain ?? EM_DASH}
+              </span>
+              {/*
+                DataForSEO returns the searched domain as a row of its own —
+                the baseline every other row is measured against. Saying so
+                beats leaving a row that looks like it competes with itself.
+              */}
+              {domain === search.target ? (
+                <Badge variant="brand">This domain</Badge>
+              ) : null}
+            </span>
+          );
+        },
       }),
       col.accessor((row) => row.commonKeywords, {
         id: "commonKeywords",
@@ -134,7 +148,10 @@ export function CompetitorsTab({
         enableSorting: false,
         cell: (info) => {
           const { domain } = info.row.original;
-          if (domain === null || domain === "") return null;
+          // No dead button on the row for the domain already on screen.
+          if (domain === null || domain === "" || domain === search.target) {
+            return null;
+          }
           return (
             <Button size="sm" variant="ghost" onClick={() => onAnalyze(domain)}>
               Analyze
