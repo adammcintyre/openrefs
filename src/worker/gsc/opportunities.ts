@@ -18,6 +18,7 @@ import type {
   GscCannibalizedPage,
   GscLowCtrOpportunity,
   GscMetrics,
+  GscOpportunityList,
   GscOpportunityThresholds,
   GscQueryRow,
   GscStrikingDistanceOpportunity,
@@ -33,6 +34,19 @@ export const STRIKING_DISTANCE_MAX_POSITION = 20;
 
 /** Only positions Google actually shows on page one can be under-clicked. */
 export const LOW_CTR_MAX_POSITION = 10;
+
+/**
+ * The floor of Search Console's 1-based position scale.
+ *
+ * Not a tunable threshold — a validity guard, which is why it is absent from
+ * the reported `thresholds`. `gsc/api.ts` normalises a **missing** `position`
+ * to 0, and 0 is not a rank: it means Google returned no position for the row.
+ * Without this check such a row passes `position <= 10`, and `expectedCtr`
+ * clamps anything below 1 to the position-1 value — so an unknown position
+ * would be held to the harshest expectation on the curve (27.6%) and reported
+ * as a low-CTR problem on no evidence at all.
+ */
+export const LOW_CTR_MIN_POSITION = 1;
 
 /** "Below half the expected curve" — docs/specs/PHASE5.md. */
 export const LOW_CTR_RATIO = 0.5;
@@ -51,6 +65,10 @@ export const CANNIBALIZATION_MIN_PAGES = 2;
  * and the lists are sorted so the 200 kept are the 200 worth having. A 5,000
  * row pull can otherwise yield well over a thousand striking-distance hits and
  * turn one response into a megabyte of JSON.
+ *
+ * Each rule reports the pre-cap match count alongside its rows
+ * (`GscOpportunityList.total`), so truncation is visible rather than silent —
+ * "showing 200 of 843", not a list that merely looks complete.
  */
 export const OPPORTUNITY_LIMIT = 200;
 
@@ -205,28 +223,35 @@ function metrics(row: GscMetrics): GscMetrics {
  * there" from the long tail of one-impression queries that sit at position 12
  * because they were shown once.
  *
- * Sorted by impressions descending — the size of the prize.
+ * Sorted by impressions descending — the size of the prize — and capped, with
+ * the full match count reported as `total`.
  */
 export function findStrikingDistance(
   rows: readonly GscQueryRow[],
   pageByQuery: ReadonlyMap<string, string>,
   minImpressions: number,
-): GscStrikingDistanceOpportunity[] {
-  return rows
-    .filter(
-      (row) =>
-        row.position >= STRIKING_DISTANCE_MIN_POSITION &&
-        row.position <= STRIKING_DISTANCE_MAX_POSITION &&
-        row.impressions >= minImpressions,
-    )
-    .sort((a, b) => b.impressions - a.impressions)
-    .slice(0, OPPORTUNITY_LIMIT)
-    .map((row) => ({
-      rule: "striking_distance" as const,
-      query: row.query,
-      page: pageByQuery.get(row.query) ?? null,
-      ...metrics(row),
-    }));
+): GscOpportunityList<GscStrikingDistanceOpportunity> {
+  // `filter` already copied, so the in-place sort cannot reach the caller's
+  // array.
+  const matches = rows.filter(
+    (row) =>
+      row.position >= STRIKING_DISTANCE_MIN_POSITION &&
+      row.position <= STRIKING_DISTANCE_MAX_POSITION &&
+      row.impressions >= minImpressions,
+  );
+
+  return {
+    total: matches.length,
+    items: matches
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, OPPORTUNITY_LIMIT)
+      .map((row) => ({
+        rule: "striking_distance" as const,
+        query: row.query,
+        page: pageByQuery.get(row.query) ?? null,
+        ...metrics(row),
+      })),
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -244,31 +269,44 @@ export function findStrikingDistance(
  * of all queries.
  *
  * Zero-impression rows are excluded: their CTR is 0 by definition and says
- * nothing about the snippet.
+ * nothing about the snippet. So are rows with no usable position — see
+ * `LOW_CTR_MIN_POSITION`, which is the difference between "ranks 4th and is
+ * under-clicked" and "Google told us nothing about where this ranked".
  *
- * Sorted by impressions descending, so the biggest wasted rankings lead.
+ * Sorted by impressions descending, so the biggest wasted rankings lead, and
+ * capped with the full match count reported as `total`.
  */
 export function findLowCtr(
   rows: readonly GscQueryRow[],
   pageByQuery: ReadonlyMap<string, string>,
-): GscLowCtrOpportunity[] {
-  return rows
-    .filter((row) => row.position <= LOW_CTR_MAX_POSITION && row.impressions > 0)
+): GscOpportunityList<GscLowCtrOpportunity> {
+  const matches = rows
+    .filter(
+      (row) =>
+        row.position >= LOW_CTR_MIN_POSITION &&
+        row.position <= LOW_CTR_MAX_POSITION &&
+        row.impressions > 0,
+    )
     .map((row) => {
       const expected = expectedCtr(row.position);
       return { row, expected, ratio: row.ctr / expected };
     })
-    .filter(({ ratio }) => ratio < LOW_CTR_RATIO)
-    .sort((a, b) => b.row.impressions - a.row.impressions)
-    .slice(0, OPPORTUNITY_LIMIT)
-    .map(({ row, expected, ratio }) => ({
-      rule: "low_ctr" as const,
-      query: row.query,
-      page: pageByQuery.get(row.query) ?? null,
-      expectedCtr: expected,
-      ctrRatio: ratio,
-      ...metrics(row),
-    }));
+    .filter(({ ratio }) => ratio < LOW_CTR_RATIO);
+
+  return {
+    total: matches.length,
+    items: matches
+      .sort((a, b) => b.row.impressions - a.row.impressions)
+      .slice(0, OPPORTUNITY_LIMIT)
+      .map(({ row, expected, ratio }) => ({
+        rule: "low_ctr" as const,
+        query: row.query,
+        page: pageByQuery.get(row.query) ?? null,
+        expectedCtr: expected,
+        ctrRatio: ratio,
+        ...metrics(row),
+      })),
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -297,7 +335,7 @@ export function findLowCtr(
 export function findCannibalization(
   queryPageRows: readonly GscQueryPageRow[],
   queryTotals: ReadonlyMap<string, GscMetrics>,
-): GscCannibalizationOpportunity[] {
+): GscOpportunityList<GscCannibalizationOpportunity> {
   const byQuery = new Map<string, GscQueryPageRow[]>();
   for (const row of queryPageRows) {
     const list = byQuery.get(row.query);
@@ -336,9 +374,10 @@ export function findCannibalization(
     });
   }
 
-  return found
-    .sort((a, b) => b.clicks - a.clicks)
-    .slice(0, OPPORTUNITY_LIMIT);
+  return {
+    total: found.length,
+    items: found.sort((a, b) => b.clicks - a.clicks).slice(0, OPPORTUNITY_LIMIT),
+  };
 }
 
 /**
@@ -378,9 +417,9 @@ export interface OpportunityInput {
 }
 
 export interface OpportunityOutput {
-  strikingDistance: GscStrikingDistanceOpportunity[];
-  lowCtr: GscLowCtrOpportunity[];
-  cannibalization: GscCannibalizationOpportunity[];
+  strikingDistance: GscOpportunityList<GscStrikingDistanceOpportunity>;
+  lowCtr: GscOpportunityList<GscLowCtrOpportunity>;
+  cannibalization: GscOpportunityList<GscCannibalizationOpportunity>;
   thresholds: GscOpportunityThresholds;
 }
 

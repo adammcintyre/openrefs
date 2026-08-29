@@ -168,7 +168,7 @@ describe("findStrikingDistance", () => {
       q({ query: "too-deep", position: 41, impressions: 500 }),
       q({ query: "too-quiet", position: 7, impressions: 10 }),
     ];
-    const found = findStrikingDistance(rows, NO_PAGES, 100);
+    const found = findStrikingDistance(rows, NO_PAGES, 100).items;
     expect(found.map((row) => row.query)).toEqual(["in-range"]);
   });
 
@@ -179,13 +179,13 @@ describe("findStrikingDistance", () => {
       q({ query: "at-4.9", position: 4.9 }),
       q({ query: "at-20.1", position: 20.1 }),
     ];
-    const found = findStrikingDistance(rows, NO_PAGES, 0);
+    const found = findStrikingDistance(rows, NO_PAGES, 0).items;
     expect(found.map((row) => row.query).sort()).toEqual(["at-20", "at-5"]);
   });
 
   it("includes a row exactly at the median, not just above it", () => {
     const rows = [q({ query: "at-median", position: 9, impressions: 100 })];
-    expect(findStrikingDistance(rows, NO_PAGES, 100)).toHaveLength(1);
+    expect(findStrikingDistance(rows, NO_PAGES, 100).items).toHaveLength(1);
   });
 
   it("orders by impressions, biggest prize first", () => {
@@ -195,7 +195,7 @@ describe("findStrikingDistance", () => {
       q({ query: "mid", position: 9, impressions: 900 }),
     ];
     expect(
-      findStrikingDistance(rows, NO_PAGES, 0).map((row) => row.query),
+      findStrikingDistance(rows, NO_PAGES, 0).items.map((row) => row.query),
     ).toEqual(["big", "mid", "small"]);
   });
 
@@ -205,7 +205,7 @@ describe("findStrikingDistance", () => {
       rows,
       new Map([["widgets", "/widgets"]]),
       0,
-    );
+    ).items;
     expect(found.find((row) => row.query === "widgets")?.page).toBe("/widgets");
     expect(found.find((row) => row.query === "gadgets")?.page).toBeNull();
   });
@@ -214,10 +214,31 @@ describe("findStrikingDistance", () => {
     const rows = Array.from({ length: OPPORTUNITY_LIMIT + 50 }, (_, i) =>
       q({ query: `k${i}`, position: 9, impressions: 1000 - i }),
     );
-    const found = findStrikingDistance(rows, NO_PAGES, 0);
+    const found = findStrikingDistance(rows, NO_PAGES, 0).items;
     expect(found).toHaveLength(OPPORTUNITY_LIMIT);
     // Kept the biggest, not the first 200 in input order.
     expect(found[0]?.query).toBe("k0");
+  });
+
+  it("reports how many matched before the cap, so truncation is visible", () => {
+    // Without this the UI cannot tell 200-of-200 from 200-of-250, and shows a
+    // truncated list as though it were the whole picture.
+    const rows = Array.from({ length: OPPORTUNITY_LIMIT + 50 }, (_, i) =>
+      q({ query: `k${i}`, position: 9, impressions: 1000 - i }),
+    );
+    const found = findStrikingDistance(rows, NO_PAGES, 0);
+
+    expect(found.total).toBe(OPPORTUNITY_LIMIT + 50);
+    expect(found.items).toHaveLength(OPPORTUNITY_LIMIT);
+  });
+
+  it("counts only matches in the total, not the rows it was handed", () => {
+    const rows = [
+      q({ query: "in-range", position: 7, impressions: 500 }),
+      q({ query: "too-good", position: 2, impressions: 500 }),
+      q({ query: "too-deep", position: 41, impressions: 500 }),
+    ];
+    expect(findStrikingDistance(rows, NO_PAGES, 0).total).toBe(1);
   });
 
   it("does not mutate the caller's rows", () => {
@@ -240,7 +261,7 @@ describe("findLowCtr", () => {
       q({ query: "at-half", position: 3, ctr: expected * LOW_CTR_RATIO, impressions: 1000 }),
       q({ query: "healthy", position: 3, ctr: expected, impressions: 1000 }),
     ];
-    expect(findLowCtr(rows, NO_PAGES).map((row) => row.query)).toEqual(["under"]);
+    expect(findLowCtr(rows, NO_PAGES).items.map((row) => row.query)).toEqual(["under"]);
   });
 
   it("ignores anything past position 10 — the curve stops being meaningful", () => {
@@ -248,14 +269,51 @@ describe("findLowCtr", () => {
       q({ query: "deep", position: 14, ctr: 0, impressions: 5000 }),
       q({ query: "shallow", position: 9, ctr: 0, impressions: 5000 }),
     ];
-    expect(findLowCtr(rows, NO_PAGES).map((row) => row.query)).toEqual([
+    expect(findLowCtr(rows, NO_PAGES).items.map((row) => row.query)).toEqual([
       "shallow",
     ]);
   });
 
   it("ignores zero-impression rows — 0/0 says nothing about a snippet", () => {
     const rows = [q({ query: "unseen", position: 2, ctr: 0, impressions: 0 })];
-    expect(findLowCtr(rows, NO_PAGES)).toEqual([]);
+    expect(findLowCtr(rows, NO_PAGES).items).toEqual([]);
+  });
+
+  it("ignores a row with no position rather than judging it as position 1", () => {
+    /*
+     * `gsc/api.ts` normalises a missing `position` to 0. Position 0 does not
+     * exist on Search Console's 1-based scale — it means Google reported none —
+     * and it slips past `position <= 10` while `expectedCtr` clamps anything
+     * below 1 to the position-1 value. So an unknown position would be held to
+     * the harshest expectation on the whole curve (27.6%) and reported as a
+     * low-CTR problem on no evidence whatsoever.
+     */
+    const rows = [
+      q({ query: "no-position", position: 0, ctr: 0.001, impressions: 5000 }),
+    ];
+
+    const found = findLowCtr(rows, NO_PAGES);
+    expect(found.items).toEqual([]);
+    // Not merely capped out of the list — never a match in the first place.
+    expect(found.total).toBe(0);
+  });
+
+  it("still admits a genuine position 1", () => {
+    // The guard is a floor at 1, not an exclusion of the top rank.
+    const rows = [q({ query: "top", position: 1, ctr: 0.001, impressions: 5000 })];
+    expect(findLowCtr(rows, NO_PAGES).items.map((row) => row.query)).toEqual([
+      "top",
+    ]);
+  });
+
+  it("reports how many matched before the cap", () => {
+    const rows = Array.from({ length: OPPORTUNITY_LIMIT + 25 }, (_, i) =>
+      q({ query: `k${i}`, position: 5, ctr: 0, impressions: 1000 - i }),
+    );
+    const found = findLowCtr(rows, NO_PAGES);
+
+    expect(found.total).toBe(OPPORTUNITY_LIMIT + 25);
+    expect(found.items).toHaveLength(OPPORTUNITY_LIMIT);
   });
 
   it("reports the expected CTR and the ratio it measured", () => {
@@ -263,7 +321,7 @@ describe("findLowCtr", () => {
     const rows = [
       q({ query: "k", position: 4, ctr: expected * 0.25, impressions: 800 }),
     ];
-    const [found] = findLowCtr(rows, NO_PAGES);
+    const [found] = findLowCtr(rows, NO_PAGES).items;
     expect(found?.expectedCtr).toBeCloseTo(expected, 10);
     expect(found?.ctrRatio).toBeCloseTo(0.25, 10);
   });
@@ -273,7 +331,7 @@ describe("findLowCtr", () => {
       q({ query: "small", position: 5, ctr: 0, impressions: 100 }),
       q({ query: "huge", position: 5, ctr: 0, impressions: 90_000 }),
     ];
-    expect(findLowCtr(rows, NO_PAGES).map((row) => row.query)).toEqual([
+    expect(findLowCtr(rows, NO_PAGES).items.map((row) => row.query)).toEqual([
       "huge",
       "small",
     ]);
@@ -283,7 +341,7 @@ describe("findLowCtr", () => {
     const rows = [
       q({ query: "brand term", position: 1.2, ctr: 0.02, impressions: 12_000 }),
     ];
-    const [found] = findLowCtr(rows, NO_PAGES);
+    const [found] = findLowCtr(rows, NO_PAGES).items;
     expect(found?.query).toBe("brand term");
     expect(found?.rule).toBe("low_ctr");
   });
@@ -299,7 +357,7 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/a", clicks: 50 }),
       qp({ query: "widgets", page: "/b", clicks: 50 }),
     ];
-    const found = findCannibalization(rows, totals);
+    const found = findCannibalization(rows, totals).items;
     expect(found).toHaveLength(1);
     expect(found[0]?.pages.map((page) => page.page)).toEqual(["/a", "/b"]);
     expect(found[0]?.pages[0]?.shareOfClicks).toBeCloseTo(0.5, 10);
@@ -310,7 +368,7 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/a", clicks: 95 }),
       qp({ query: "widgets", page: "/b", clicks: 5 }),
     ];
-    expect(findCannibalization(rows, totals)).toEqual([]);
+    expect(findCannibalization(rows, totals).items).toEqual([]);
   });
 
   it("drops the pages below the share threshold but keeps the finding", () => {
@@ -320,7 +378,7 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/c", clicks: 20 }),
       qp({ query: "widgets", page: "/d", clicks: 1 }),
     ];
-    const [found] = findCannibalization(rows, totals);
+    const [found] = findCannibalization(rows, totals).items;
     // /c is exactly at the threshold (20/101 < 0.2 → excluded); /d is far below.
     expect(found?.pages.map((page) => page.page)).toEqual(["/a", "/b"]);
   });
@@ -330,7 +388,7 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/a", clicks: 80 }),
       qp({ query: "widgets", page: "/b", clicks: 20 }),
     ];
-    const [found] = findCannibalization(rows, totals);
+    const [found] = findCannibalization(rows, totals).items;
     expect(found?.pages).toHaveLength(2);
     expect(found?.pages[1]?.shareOfClicks).toBeCloseTo(
       CANNIBALIZATION_MIN_SHARE,
@@ -343,12 +401,12 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/a", clicks: 0, impressions: 5000 }),
       qp({ query: "widgets", page: "/b", clicks: 0, impressions: 5000 }),
     ];
-    expect(findCannibalization(rows, totals)).toEqual([]);
+    expect(findCannibalization(rows, totals).items).toEqual([]);
   });
 
   it("ignores a query served by a single page", () => {
     const rows = [qp({ query: "widgets", page: "/a", clicks: 100 })];
-    expect(findCannibalization(rows, totals)).toEqual([]);
+    expect(findCannibalization(rows, totals).items).toEqual([]);
   });
 
   it("prefers Google's own query-level aggregate for the headline metrics", () => {
@@ -360,7 +418,7 @@ describe("findCannibalization", () => {
     const queryTotals = new Map([
       ["widgets", { clicks: 100, impressions: 1000, ctr: 0.1, position: 4.2 }],
     ]);
-    const [found] = findCannibalization(rows, queryTotals);
+    const [found] = findCannibalization(rows, queryTotals).items;
     expect(found?.impressions).toBe(1000);
     expect(found?.position).toBe(4.2);
   });
@@ -371,7 +429,7 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/a", clicks: 30, impressions: 300, position: 2 }),
       qp({ query: "widgets", page: "/b", clicks: 30, impressions: 300, position: 8 }),
     ];
-    const [found] = findCannibalization(rows, totals);
+    const [found] = findCannibalization(rows, totals).items;
     expect(found?.clicks).toBe(60);
     expect(found?.impressions).toBe(600);
     expect(found?.ctr).toBeCloseTo(0.1, 10);
@@ -386,7 +444,7 @@ describe("findCannibalization", () => {
       qp({ query: "big", page: "/c", clicks: 300 }),
       qp({ query: "big", page: "/d", clicks: 200 }),
     ];
-    const found = findCannibalization(rows, totals);
+    const found = findCannibalization(rows, totals).items;
     expect(found.map((row) => row.query)).toEqual(["big", "small"]);
     expect(found[0]?.page).toBe("/c");
   });
@@ -397,7 +455,19 @@ describe("findCannibalization", () => {
       qp({ query: "widgets", page: "/b", clicks: 33 }),
       qp({ query: "widgets", page: "/c", clicks: 33 }),
     ];
-    expect(findCannibalization(rows, totals)[0]?.pages).toHaveLength(3);
+    expect(findCannibalization(rows, totals).items[0]?.pages).toHaveLength(3);
+  });
+
+  it("caps the list and reports how many matched before the cap", () => {
+    const rows = Array.from({ length: OPPORTUNITY_LIMIT + 10 }, (_, i) => [
+      qp({ query: `k${i}`, page: "/a", clicks: 50 }),
+      qp({ query: `k${i}`, page: "/b", clicks: 50 }),
+    ]).flat();
+
+    const found = findCannibalization(rows, totals);
+
+    expect(found.total).toBe(OPPORTUNITY_LIMIT + 10);
+    expect(found.items).toHaveLength(OPPORTUNITY_LIMIT);
   });
 });
 
@@ -424,10 +494,12 @@ describe("computeOpportunities", () => {
 
     const out = computeOpportunities({ queryRows, queryPageRows });
 
-    expect(out.strikingDistance.map((row) => row.query)).toEqual(["striking"]);
-    expect(out.strikingDistance[0]?.page).toBe("/striking");
-    expect(out.lowCtr.map((row) => row.query)).toEqual(["wasted"]);
-    expect(out.cannibalization.map((row) => row.query)).toEqual(["split"]);
+    expect(out.strikingDistance.items.map((row) => row.query)).toEqual([
+      "striking",
+    ]);
+    expect(out.strikingDistance.items[0]?.page).toBe("/striking");
+    expect(out.lowCtr.items.map((row) => row.query)).toEqual(["wasted"]);
+    expect(out.cannibalization.items.map((row) => row.query)).toEqual(["split"]);
   });
 
   it("lets one query appear under more than one rule", () => {
@@ -441,8 +513,8 @@ describe("computeOpportunities", () => {
     ];
     const out = computeOpportunities({ queryRows, queryPageRows: [] });
 
-    expect(out.strikingDistance.map((row) => row.query)).toEqual(["both"]);
-    expect(out.lowCtr.map((row) => row.query)).toEqual(["both"]);
+    expect(out.strikingDistance.items.map((row) => row.query)).toEqual(["both"]);
+    expect(out.lowCtr.items.map((row) => row.query)).toEqual(["both"]);
   });
 
   it("reports the thresholds it used, median included", () => {
@@ -460,9 +532,31 @@ describe("computeOpportunities", () => {
 
   it("returns three empty lists for a property with no data", () => {
     const out = computeOpportunities({ queryRows: [], queryPageRows: [] });
-    expect(out.strikingDistance).toEqual([]);
-    expect(out.lowCtr).toEqual([]);
-    expect(out.cannibalization).toEqual([]);
+    expect(out.strikingDistance).toEqual({ items: [], total: 0 });
+    expect(out.lowCtr).toEqual({ items: [], total: 0 });
+    expect(out.cannibalization).toEqual({ items: [], total: 0 });
     expect(out.thresholds.strikingDistance.minImpressions).toBe(0);
+  });
+
+  it("reports a pre-cap total on every list, not just the truncated ones", () => {
+    // The UI reads `total` unconditionally to decide whether to say "showing
+    // 200 of N", so an untruncated list must still carry an honest count
+    // rather than 0 or undefined.
+    const queryRows = [
+      q({ query: "striking", position: 8, impressions: 5000, clicks: 100, ctr: 0.02 }),
+      q({ query: "wasted", position: 2, impressions: 4000, clicks: 4, ctr: 0.001 }),
+      q({ query: "split", position: 6, impressions: 50, clicks: 20, ctr: 0.4 }),
+    ];
+    const queryPageRows = [
+      qp({ query: "split", page: "/one", clicks: 10 }),
+      qp({ query: "split", page: "/two", clicks: 10 }),
+    ];
+
+    const out = computeOpportunities({ queryRows, queryPageRows });
+
+    expect(out.strikingDistance.total).toBe(out.strikingDistance.items.length);
+    expect(out.lowCtr.total).toBe(out.lowCtr.items.length);
+    expect(out.cannibalization.total).toBe(out.cannibalization.items.length);
+    expect(out.cannibalization.total).toBe(1);
   });
 });
