@@ -363,11 +363,32 @@ backlinks.get("/anchors", async (c) => {
 });
 
 /**
+ * The latest `to` DataForSEO accepts: yesterday, UTC.
+ *
+ * **Undocumented, found live (2026-08-29):** `date_to` must be *strictly
+ * earlier than the present date*. Passing today — which is exactly what a
+ * "last 12 months" range picker produces — fails the task with
+ * `40501 Invalid Field: 'date_to - must be earlier than present date'`, after
+ * being billed. Clamping is friendlier than refusing: the caller wants "up to
+ * now", and the response echoes the range actually used.
+ */
+export function clampHistoryTo(
+  to: string | undefined,
+  now: Date,
+): string | undefined {
+  const latest = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  if (to === undefined) return undefined;
+  return to > latest ? latest : to;
+}
+
+/**
  * GET /api/v1/backlinks/history?…&from&to
  *
  * A monthly series. `from` is validated against the provider's own index start
  * (2019-01-01) here rather than upstream, so an out-of-range date costs a 422
- * instead of a billed error.
+ * instead of a billed error; `to` is clamped for the same reason.
  */
 backlinks.get("/history", async (c) => {
   const query = readQuery(c, historyQuerySchema);
@@ -377,7 +398,8 @@ backlinks.get("/history", async (c) => {
       `Link history starts at ${BACKLINKS_HISTORY_MIN_DATE}.`,
     );
   }
-  if (query.from && query.to && query.to < query.from) {
+  const dateTo = clampHistoryTo(query.to, new Date());
+  if (query.from && dateTo && dateTo < query.from) {
     throw new ApiException("validation_failed", "`to` must not precede `from`.");
   }
 
@@ -387,7 +409,7 @@ backlinks.get("/history", async (c) => {
   const result = await dfs.backlinks.historyLive({
     target: query.target,
     dateFrom: query.from,
-    dateTo: query.to,
+    dateTo,
     fresh: query.fresh,
   });
 
