@@ -77,7 +77,7 @@ Cloudflare free plan.
 ### Local development
 
 ```bash
-git clone https://github.com/openrefs/openrefs.git
+git clone https://github.com/adammcintyre/openrefs.git
 cd openrefs
 npm install
 
