@@ -5,6 +5,15 @@
   "compatibility_date": "2026-08-25",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Deployed builds are always "production". `.dev.vars` overrides this with
+  // APP_ENV=development locally, which is the single switch for dev-only
+  // behaviour: the DATAFORSEO_LOGIN/PASSWORD env fallback in
+  // src/worker/dataforseo/credentials.ts and the /api/v1/dev routes. A hosted
+  // tenant must never reach either, so nothing else may gate on this value.
+  "vars": {
+    "APP_ENV": "production"
+  },
+
   // The React SPA is served from the same Worker as static assets.
   // `directory` is rewritten by @cloudflare/vite-plugin at build time to point at
   // the real client bundle; it is declared here so the plain `wrangler` CLI
