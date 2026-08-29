@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="OpenRefs — open-source SEO intelligence">
+  <title>OpenRefs — open-source SEO intelligence</title>
+  <!--
+    Social card artwork. Kept as SVG so it stays editable and diffable; see
+    og.png next to it for the raster the meta tags actually point at, since
+    most scrapers refuse SVG.
+  -->
+  <defs>
+    <style>
+      .t { font-family: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="630" fill="#101913"/>
+
+  <!-- Oversized mark bleeding off the right edge, low contrast so type stays first. -->
+  <g opacity="0.10" transform="translate(880 90) scale(14)">
+    <g transform="rotate(-14 16 16)">
+      <path d="M16 4C23.4 10 23.4 22 16 28C8.6 22 8.6 10 16 4Z" fill="#68BA7F"/>
+      <path d="M16 9.3C20.2 12.6 20.2 19.4 16 22.7C11.8 19.4 11.8 12.6 16 9.3Z" fill="#101913"/>
+      <path d="M16 13.1C17.8 14.6 17.8 17.4 16 18.9C14.2 17.4 14.2 14.6 16 13.1Z" fill="#68BA7F"/>
+    </g>
+  </g>
+
+  <!-- Lock-up -->
+  <g transform="translate(80 78) scale(2.5)">
+    <g transform="rotate(-14 16 16)">
+      <path d="M16 4C23.4 10 23.4 22 16 28C8.6 22 8.6 10 16 4Z" fill="#68BA7F"/>
+      <path d="M16 9.3C20.2 12.6 20.2 19.4 16 22.7C11.8 19.4 11.8 12.6 16 9.3Z" fill="#2E6F40"/>
+      <path d="M16 13.1C17.8 14.6 17.8 17.4 16 18.9C14.2 17.4 14.2 14.6 16 13.1Z" fill="#CFFFDC"/>
+    </g>
+  </g>
+  <text class="t" x="180" y="132" font-size="50" font-weight="700" letter-spacing="-1">
+    <tspan fill="#68BA7F">Open</tspan><tspan fill="#E8F1EA">Refs</tspan>
+  </text>
+
+  <text class="t" x="80" y="316" font-size="72" font-weight="700" fill="#E8F1EA" letter-spacing="-2">Open-source SEO</text>
+  <text class="t" x="80" y="400" font-size="72" font-weight="700" fill="#E8F1EA" letter-spacing="-2">intelligence</text>
+
+  <text class="t" x="80" y="470" font-size="30" fill="#9BB0A3">Bring your own DataForSEO key. Self-host on Cloudflare&#8217;s free plan.</text>
+
+  <rect x="80" y="534" width="52" height="3" rx="1.5" fill="#68BA7F"/>
+  <text class="t" x="80" y="580" font-size="24" font-weight="500" fill="#68BA7F">AGPL-3.0</text>
+</svg>

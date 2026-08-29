@@ -42,12 +42,62 @@
 
   --ring: #2e6f40;
 
-  /* Recharts series. Ordered for categorical use, not a gradient. */
+  /*
+   * Semantic scale. Four tokens per meaning, so a component never has to
+   * invent a pairing:
+   *   --x            solid fill, and the text colour when used on a surface
+   *   --x-contrast   text placed ON that solid fill
+   *   --x-subtle     tinted background (badges, callouts)
+   *   --x-on-subtle  text placed on that tinted background
+   * Every pair below is >= 4.5:1 (measured; see the design agent's report).
+   */
+  --success: #17643a; /* 7.2:1 on --surface */
+  --success-contrast: #ffffff; /* 7.2:1 on --success */
+  --success-subtle: #e3f3e8;
+  --success-on-subtle: #17643a; /* 6.3:1 on --success-subtle */
+
+  --warning: #855200; /* 6.6:1 on --surface */
+  --warning-contrast: #ffffff; /* 6.6:1 on --warning */
+  --warning-subtle: #f8eeda;
+  --warning-on-subtle: #855200; /* 5.7:1 on --warning-subtle */
+
+  --danger: #b02418; /* 6.8:1 on --surface */
+  --danger-contrast: #ffffff; /* 6.8:1 on --danger */
+  --danger-hover: #8f1d13;
+  --danger-subtle: #fbeae7;
+  --danger-on-subtle: #b02418; /* 5.8:1 on --danger-subtle */
+
+  --info: #1c5f7a; /* 7.1:1 on --surface */
+  --info-contrast: #ffffff; /* 7.1:1 on --info */
+  --info-subtle: #e3eff4;
+  --info-on-subtle: #1c5f7a; /* 6.0:1 on --info-subtle */
+
+  /*
+   * Recharts series. Ordered for categorical use, not a gradient.
+   * Every series clears 3:1 against --surface (WCAG 1.4.11, non-text
+   * contrast) so a 2px stroke stays visible:
+   *   1 6.1:1 · 2 3.9:1 · 3 7.1:1 · 4 4.4:1 · 5 6.0:1
+   * chart-2 was #68ba7f (2.4:1) and chart-4 #b8862b (3.2:1); both were
+   * weighted down to clear the bar. Series 1 and 2 are both greens and
+   * cannot be told apart by hue alone, so the chart components also vary
+   * stroke dash per series (WCAG 1.4.1, use of colour).
+   */
   --chart-1: #2e6f40;
-  --chart-2: #68ba7f;
+  --chart-2: #3f9257;
   --chart-3: #1c5f7a;
-  --chart-4: #b8862b;
+  --chart-4: #9d7016;
   --chart-5: #8a4f7d;
+
+  /* Chart chrome. Grid is decorative; axis text must clear AA, so it tracks
+     --muted-foreground rather than the grid tone. */
+  --chart-grid: #e7eeea;
+  --chart-axis: #5a6d61; /* 5.5:1 on --surface */
+
+  /* Logomark rings, outermost first. The outer ring carries the silhouette,
+     so it is the one that has to hold up against the page (6.1:1 here). */
+  --logo-1: #2e6f40;
+  --logo-2: #68ba7f;
+  --logo-3: #cfffdc;
 
   --radius: 0.5rem;
 }
@@ -73,11 +123,45 @@
 
   --ring: #68ba7f;
 
+  /* Same contract as light; the hues lighten so they clear AA on dark
+     surfaces, and the "contrast" colours flip to near-black. */
+  --success: #68ba7f; /* 7.0:1 on --surface */
+  --success-contrast: #0e1712; /* 7.8:1 on --success */
+  --success-subtle: #1e3226;
+  --success-on-subtle: #8fd3a3; /* 7.8:1 on --success-subtle */
+
+  --warning: #d9ab55; /* 7.8:1 on --surface */
+  --warning-contrast: #1a1405; /* 8.6:1 on --warning */
+  --warning-subtle: #2e2718;
+  --warning-on-subtle: #e5c07b; /* 8.6:1 on --warning-subtle */
+
+  --danger: #f0918a; /* 7.2:1 on --surface */
+  --danger-contrast: #2a100d; /* 7.7:1 on --danger */
+  --danger-hover: #f5a9a3;
+  --danger-subtle: #33211f;
+  --danger-on-subtle: #f0918a; /* 6.6:1 on --danger-subtle */
+
+  --info: #5aa9c9; /* 6.3:1 on --surface */
+  --info-contrast: #06171e; /* 6.9:1 on --info */
+  --info-subtle: #152a33;
+  --info-on-subtle: #8fc9e0; /* 8.2:1 on --info-subtle */
+
+  /* 1 7.0:1 · 2 4.7:1 · 3 6.3:1 · 4 7.8:1 · 5 6.0:1 on --surface.
+     chart-2 was #2e6f40 (2.7:1) — too dark to read against a dark ground. */
   --chart-1: #68ba7f;
-  --chart-2: #2e6f40;
+  --chart-2: #3a9a5c;
   --chart-3: #5aa9c9;
   --chart-4: #d9ab55;
   --chart-5: #c08bb5;
+
+  --chart-grid: #26352c;
+  --chart-axis: #9bb0a3; /* 7.2:1 on --surface */
+
+  /* The ramp inverts so the outer ring stays the bright one (7.0:1 here);
+     the deep green would sink into the surface at 16px. */
+  --logo-1: #68ba7f;
+  --logo-2: #2e6f40;
+  --logo-3: #cfffdc;
 }
 
 /*
@@ -102,6 +186,30 @@
   --color-tint-foreground: var(--tint-foreground);
 
   --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-contrast: var(--success-contrast);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-on-subtle: var(--success-on-subtle);
+
+  --color-warning: var(--warning);
+  --color-warning-contrast: var(--warning-contrast);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-on-subtle: var(--warning-on-subtle);
+
+  --color-danger: var(--danger);
+  --color-danger-contrast: var(--danger-contrast);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-on-subtle: var(--danger-on-subtle);
+
+  --color-info: var(--info);
+  --color-info-contrast: var(--info-contrast);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-on-subtle: var(--info-on-subtle);
+
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-axis: var(--chart-axis);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -139,5 +247,21 @@
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+  }
+
+  /*
+   * Blanket motion opt-out. Recharts animates via JS rather than CSS, so the
+   * chart wrappers additionally read this query through
+   * components/charts/use-reduced-motion and pass isAnimationActive={false}.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

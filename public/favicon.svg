@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="OpenRefs">
+  <title>OpenRefs</title>
+  <!--
+    Tile version of the logomark. Deliberately a solid brand-green tile rather
+    than a transparent mark: tab bars are light in one OS theme and dark in the
+    other, and a filled tile reads on both without a prefers-color-scheme
+    branch. The middle ring is the tile colour showing through, which keeps
+    three crisp bands at 16px.
+  -->
+  <rect width="32" height="32" rx="7" fill="#2E6F40"/>
+  <g transform="rotate(-14 16 16)">
+    <path d="M16 6C22.2 11 22.2 21 16 26C9.8 21 9.8 11 16 6Z" fill="#CFFFDC"/>
+    <path d="M16 10.4C19.5 13.2 19.5 18.8 16 21.6C12.5 18.8 12.5 13.2 16 10.4Z" fill="#2E6F40"/>
+    <path d="M16 13.6C17.5 14.8 17.5 17.2 16 18.4C14.5 17.2 14.5 14.8 16 13.6Z" fill="#CFFFDC"/>
+  </g>
+</svg>

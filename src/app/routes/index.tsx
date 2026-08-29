@@ -1,6 +1,8 @@
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 
+import { AccountMenu } from "../components/account-menu";
 import { ComingSoon } from "../components/coming-soon";
+import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { useMe } from "../lib/session";
 import { AppLayout } from "./app-layout";
 import { InviteAccept } from "./invite";
@@ -62,7 +64,15 @@ export function AppRoutes() {
       <Route path="/invite/:token" element={<InviteAccept />} />
 
       <Route element={<RequireSession />}>
-        <Route path="/app" element={<AppLayout />}>
+        <Route
+          path="/app"
+          element={
+            <AppLayout
+              workspaceSwitcher={<WorkspaceSwitcher />}
+              accountMenu={<AccountMenu />}
+            />
+          }
+        >
           {NAV_ITEMS.filter((item) => item.segment !== SETTINGS_SEGMENT).map(
             (item) => {
               const element = (
