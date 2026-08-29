@@ -20,7 +20,7 @@
  * request time so the cost hint in the response is a real posted task, not a
  * promise); everything else is D1 and R2 reads.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -51,7 +51,7 @@ import {
   perPageCostUsd,
 } from "../dataforseo/on-page";
 import { ApiException } from "../http";
-import { enqueueJob, hasQueuedJobForProject } from "../jobs";
+import { enqueueJob } from "../jobs";
 import type { AuditPollPayload } from "../jobs/audit_poll";
 import { AUDIT_FIRST_POLL_DELAY_MS } from "../jobs/audit_poll";
 import { authorizeWorkspace, workspaceParam } from "../lib/research";
@@ -88,7 +88,7 @@ projectAuditsRouter.get("/", async (c) => {
       .from(audits)
       .where(eq(audits.projectId, projectId))
       .orderBy(desc(audits.createdAt)),
-    hasQueuedJobForProject(db, ["audit_poll"], projectId),
+    hasUnfinishedAudit(db, projectId),
   ]);
 
   const body: AuditListResponse = {
@@ -133,7 +133,7 @@ projectAuditsRouter.post("/", async (c) => {
    * not. The check is advisory (two requests could both read "no"), which is
    * acceptable for the same reason the check-now limiter is.
    */
-  if (await hasQueuedJobForProject(db, ["audit_poll"], projectId)) {
+  if (await hasUnfinishedAudit(db, projectId)) {
     throw new ApiException(
       "conflict",
       "An audit of this project is already running. Wait for it to finish before starting another.",
@@ -351,6 +351,37 @@ function toListItem(row: AuditRow): AuditListItem {
     renderJs: record.renderJs,
     error: record.error,
   };
+}
+
+/**
+ * Whether a crawl for this project is still going.
+ *
+ * Asks the `audits` table, not the `jobs` table, and the difference is not
+ * cosmetic. A finished audit can still have a live `audit_poll` job attached
+ * to it — the follow-up that waits up to an hour for a late Lighthouse run —
+ * so "is a job queued?" answers yes for an audit that is complete and
+ * published. Observed live: an audit that finished in 98 seconds reported
+ * `auditInProgress: true` for as long as its Lighthouse chase continued, which
+ * would have shown a spinner over finished results and, worse, made the
+ * duplicate guard refuse a re-run for the rest of the hour.
+ *
+ * The audit's own status is the thing being asked about, so it is the thing to
+ * read.
+ */
+async function hasUnfinishedAudit(
+  db: Db,
+  projectId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(audits)
+    .where(
+      and(
+        eq(audits.projectId, projectId),
+        inArray(audits.status, ["pending", "running"]),
+      ),
+    );
+  return Number(row?.total ?? 0) > 0;
 }
 
 /** The project, scoped to the workspace. */
