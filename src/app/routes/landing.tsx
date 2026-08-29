@@ -249,6 +249,17 @@ export function Landing() {
             GitHub
             <ExternalLink className="size-3.5" aria-hidden="true" />
           </a>
+          {/*
+            Linked from here on purpose: Google's OAuth consent-screen review
+            expects the privacy policy to be reachable from the app's home page,
+            not only from a URL typed into the console.
+          */}
+          <Link
+            to="/privacy"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Privacy
+          </Link>
           <Link
             to="/login"
             className="text-muted-foreground transition-colors hover:text-foreground"
