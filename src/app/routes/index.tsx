@@ -5,7 +5,9 @@ import { ComingSoon } from "../components/coming-soon";
 import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { useMe } from "../lib/session";
 import { AppLayout } from "./app-layout";
+import { DomainOverviewModule } from "./domain-overview/module";
 import { InviteAccept } from "./invite";
+import { KeywordResearchModule } from "./keyword-research/module";
 import { Landing } from "./landing";
 import { Login } from "./login";
 import { NAV_ITEMS } from "./nav";
@@ -19,6 +21,16 @@ import { MembersSettings } from "./settings/members";
 
 /** Settings has real screens now, so it opts out of the ComingSoon map. */
 const SETTINGS_SEGMENT = "settings";
+
+/**
+ * Segments whose module owns its whole subtree (mounted `<segment>/*` below).
+ * A module graduating from ComingSoon adds itself here plus one Route.
+ */
+const MODULE_SEGMENTS = new Set([
+  SETTINGS_SEGMENT,
+  "keyword-research",
+  "domain-overview",
+]);
 
 function FullPageMessage({ children }: { children: string }) {
   return (
@@ -73,7 +85,7 @@ export function AppRoutes() {
             />
           }
         >
-          {NAV_ITEMS.filter((item) => item.segment !== SETTINGS_SEGMENT).map(
+          {NAV_ITEMS.filter((item) => !MODULE_SEGMENTS.has(item.segment)).map(
             (item) => {
               const element = (
                 <ComingSoon
@@ -89,6 +101,9 @@ export function AppRoutes() {
               );
             },
           )}
+
+          <Route path="keyword-research/*" element={<KeywordResearchModule />} />
+          <Route path="domain-overview/*" element={<DomainOverviewModule />} />
 
           <Route path={SETTINGS_SEGMENT} element={<SettingsLayout />}>
             <Route index element={<GeneralSettings />} />
