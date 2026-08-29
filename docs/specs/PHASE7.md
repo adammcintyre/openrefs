@@ -33,6 +33,11 @@ Search (topic + market + an Expansion select: "Just this topic" / "+5 related" /
 - Gap empty-state "Try Untapped" one-click switch.
 - Collections: migration adding nullable locationCode/languageCode to collection_keywords (default the add-time market), enabling a View SERP action in collection detail.
 
+Worker-side hardening (from BACKLOG.md, all three go to this phase's worker agent):
+- **Queue-back audit creation**: `POST /projects/:id/audits` inserts the row as `pending` and enqueues an `audit_post` job that performs the DataForSEO task_post with the queue's retry/backoff — a tarpit window no longer fails the user's click; the response stays 202 with the same cost fields. audit_poll takes over once the task id exists.
+- **Project deletion purges audit blobs**: extend `deleteProjectEverywhere` to remove `ws:<ws>/audits/<auditId>/` prefixes for the project's audits (reuse `deleteAuditBlobs`).
+- **Stale-if-error caching in the DataForSEO client**: store cache entries WITHOUT KV expirationTtl, carry `softExpiresAt` in the payload; a soft-expired entry is refreshed normally, but when the refresh times out (`upstream_timeout` only — never on spend-cap or credential errors) the stale entry is served with `stale: true` in ResultMeta (additive field; UI chips can say "cached · may be outdated"). Bound stored lifetime by deleting entries older than 90 days opportunistically on read. Unit-test the fallback matrix.
+
 ## Split
 
 Worker agent first (discover orchestration + bulk_traffic_estimation + wordcount + collections migration; live proof on topic "photo booth template" UK with expand=5, real costs). Then one UI agent (Content Discovery module + the two Gap retrofits + collection SERP action).
