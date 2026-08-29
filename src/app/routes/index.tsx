@@ -4,8 +4,10 @@ import { AccountMenu } from "../components/account-menu";
 import { ComingSoon } from "../components/coming-soon";
 import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { useMe } from "../lib/session";
+import { AiVisibilityModule } from "./ai-visibility/module";
 import { AppLayout } from "./app-layout";
 import { BacklinksModule } from "./backlinks/module";
+import { SearchConsoleModule } from "./search-console/module";
 import { DomainOverviewModule } from "./domain-overview/module";
 import { GapAnalysisModule } from "./gap-analysis/module";
 import { InviteAccept } from "./invite";
@@ -39,6 +41,8 @@ const MODULE_SEGMENTS = new Set([
   "gap-analysis",
   "rank-tracking",
   "site-audit",
+  "search-console",
+  "ai-visibility",
 ]);
 
 function FullPageMessage({ children }: { children: string }) {
@@ -118,6 +122,8 @@ export function AppRoutes() {
           <Route path="gap-analysis/*" element={<GapAnalysisModule />} />
           <Route path="rank-tracking/*" element={<RankTrackingModule />} />
           <Route path="site-audit/*" element={<SiteAuditModule />} />
+          <Route path="search-console/*" element={<SearchConsoleModule />} />
+          <Route path="ai-visibility/*" element={<AiVisibilityModule />} />
 
           <Route path={SETTINGS_SEGMENT} element={<SettingsLayout />}>
             <Route index element={<GeneralSettings />} />
