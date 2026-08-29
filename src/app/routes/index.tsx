@@ -10,6 +10,7 @@ import { DomainOverviewModule } from "./domain-overview/module";
 import { GapAnalysisModule } from "./gap-analysis/module";
 import { InviteAccept } from "./invite";
 import { KeywordResearchModule } from "./keyword-research/module";
+import { RankTrackingModule } from "./rank-tracking/module";
 import { Landing } from "./landing";
 import { Login } from "./login";
 import { NAV_ITEMS } from "./nav";
@@ -34,6 +35,7 @@ const MODULE_SEGMENTS = new Set([
   "domain-overview",
   "backlinks",
   "gap-analysis",
+  "rank-tracking",
 ]);
 
 function FullPageMessage({ children }: { children: string }) {
@@ -110,6 +112,7 @@ export function AppRoutes() {
           <Route path="domain-overview/*" element={<DomainOverviewModule />} />
           <Route path="backlinks/*" element={<BacklinksModule />} />
           <Route path="gap-analysis/*" element={<GapAnalysisModule />} />
+          <Route path="rank-tracking/*" element={<RankTrackingModule />} />
 
           <Route path={SETTINGS_SEGMENT} element={<SettingsLayout />}>
             <Route index element={<GeneralSettings />} />
