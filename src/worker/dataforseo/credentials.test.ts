@@ -105,7 +105,7 @@ describe("isDevelopment", () => {
 
 describe("maskLogin", () => {
   it("keeps two characters and the domain, which is all a log line needs", () => {
-    expect(maskLogin("team@brandpacks.com")).toBe("te***@brandpacks.com");
+    expect(maskLogin("team@example.com")).toBe("te***@example.com");
   });
 
   it("never returns the full local part", () => {
