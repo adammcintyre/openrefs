@@ -1,0 +1,9 @@
+# Temporary diagnostic: the smallest possible workflow. If this also fails to
+# start, the problem is the account/repo (billing, runners), not our CI file.
+name: Smoke
+on: [push, workflow_dispatch]
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "actions can start"
