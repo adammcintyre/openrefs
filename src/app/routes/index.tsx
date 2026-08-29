@@ -13,6 +13,8 @@ import { KeywordResearchModule } from "./keyword-research/module";
 import { RankTrackingModule } from "./rank-tracking/module";
 import { Landing } from "./landing";
 import { Login } from "./login";
+import { Privacy } from "./privacy";
+import { SiteAuditModule } from "./site-audit/module";
 import { NAV_ITEMS } from "./nav";
 import { Register } from "./register";
 import { ApiKeysSettings } from "./settings/api-keys";
@@ -36,6 +38,7 @@ const MODULE_SEGMENTS = new Set([
   "backlinks",
   "gap-analysis",
   "rank-tracking",
+  "site-audit",
 ]);
 
 function FullPageMessage({ children }: { children: string }) {
@@ -80,6 +83,7 @@ export function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/invite/:token" element={<InviteAccept />} />
+      <Route path="/privacy" element={<Privacy />} />
 
       <Route element={<RequireSession />}>
         <Route
@@ -113,6 +117,7 @@ export function AppRoutes() {
           <Route path="backlinks/*" element={<BacklinksModule />} />
           <Route path="gap-analysis/*" element={<GapAnalysisModule />} />
           <Route path="rank-tracking/*" element={<RankTrackingModule />} />
+          <Route path="site-audit/*" element={<SiteAuditModule />} />
 
           <Route path={SETTINGS_SEGMENT} element={<SettingsLayout />}>
             <Route index element={<GeneralSettings />} />
