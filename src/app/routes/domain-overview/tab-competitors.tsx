@@ -19,6 +19,7 @@ import {
   formatCount,
   formatTraffic,
 } from "../../components/domains/format";
+import { LinkButton } from "../../components/keywords/link-button";
 import {
   Badge,
   Button,
@@ -144,18 +145,27 @@ export function CompetitorsTab({
       }),
       col.display({
         id: "analyze",
-        header: "Analyze",
+        header: "Actions",
         enableSorting: false,
         cell: (info) => {
           const { domain } = info.row.original;
-          // No dead button on the row for the domain already on screen.
+          // No dead buttons on the row for the domain already on screen.
           if (domain === null || domain === "" || domain === search.target) {
             return null;
           }
+          const gapHref =
+            `/app/gap-analysis?target=${encodeURIComponent(search.target)}` +
+            `&competitors=${encodeURIComponent(domain)}` +
+            `&location=${search.location}&language=${encodeURIComponent(search.language)}`;
           return (
-            <Button size="sm" variant="ghost" onClick={() => onAnalyze(domain)}>
-              Analyze
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => onAnalyze(domain)}>
+                Analyze
+              </Button>
+              <LinkButton to={gapHref} size="sm" variant="ghost">
+                Gap
+              </LinkButton>
+            </div>
           );
         },
       }),

@@ -11,3 +11,6 @@ Owned by the orchestrator; phase agents pick these up when a spec says so. Add h
 - **`no_credentials` / `spend_cap_exceeded` UI states never exercised live** — dev always has the fallback key. Verify both renders once against production (a workspace with no credentials sees the CTA). Target: Phase 2 visual pass.
 - **`@cloudflare/vitest-plugin`** — adopt when a test genuinely needs real D1/KV bindings.
 - **Version bump discipline** — `src/shared/version.ts` is a literal; bump at each phase deploy.
+- **Gap pages view** — `/api/v1/gap/pages` (page_intersection) is live and typed but has no UI; add as a sub-view of Gap Analysis. Target: Phase 7 polish.
+- **Gap "try Untapped" affordance** — when `missing` is empty, offer a one-click switch to Untapped rather than only explanatory copy. Target: Phase 7 polish.
+- **Re-home `components/gap/domain-scores.ts` + `score-cell.tsx`** under `components/backlinks/` (they're generic Backlinks bindings; landed under gap/ only for wave file-ownership reasons). Cosmetic.
