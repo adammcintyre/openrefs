@@ -55,6 +55,20 @@ export interface HealthResponse {
   version: string;
 }
 
+/**
+ * What a DataForSEO-backed response cost, attached to every such payload.
+ *
+ * The UI uses both halves: `cached` drives the "served from cache" affordance
+ * and tells a user why a Refresh button exists, and `costUsd` is what the
+ * spend hints on expensive actions reconcile against. Zero and `cached: true`
+ * is the normal case for a repeated query.
+ */
+export interface ResultMeta {
+  /** USD billed for this response. Always 0 when `cached` is true. */
+  costUsd: number;
+  cached: boolean;
+}
+
 /** One DataForSEO endpoint's slice of a month's spend. */
 export interface EndpointUsage {
   /** DataForSEO path, e.g. "keywords_data/google_ads/search_volume/live". */

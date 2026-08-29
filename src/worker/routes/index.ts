@@ -2,8 +2,12 @@ import type { Hono } from "hono";
 
 import type { AppEnv } from "../types";
 import auth from "./auth";
+import collections from "./collections";
 import dev from "./dev";
+import domains from "./domains";
 import health from "./health";
+import keywords from "./keywords";
+import meta from "./meta";
 import usage from "./usage";
 import workspaces from "./workspaces";
 
@@ -26,6 +30,10 @@ export const routeModules: RouteModule[] = [
   { path: "/auth", router: auth },
   { path: "/workspaces", router: workspaces },
   { path: "/usage", router: usage },
+  { path: "/keywords", router: keywords },
+  { path: "/domains", router: domains },
+  { path: "/collections", router: collections },
+  { path: "/meta", router: meta },
   // Every route in this module 404s unless APP_ENV === "development".
   { path: "/dev", router: dev },
 ];

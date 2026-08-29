@@ -14,19 +14,29 @@ import type { KeywordsDataApi } from "./keywords-data";
 import { createKeywordsDataApi } from "./keywords-data";
 import type { LabsApi } from "./labs";
 import { createLabsApi } from "./labs";
+import type { MetaApi } from "./meta";
+import { createMetaApi } from "./meta";
+import type { SerpApi } from "./serp";
+import { createSerpApi } from "./serp";
 
 export * from "./client";
 export * from "./credentials";
+export * from "./filters";
 export * from "./keywords-data";
 export * from "./labs";
+export * from "./meta";
 export * from "./metering";
 export * from "./schema";
+export * from "./serp";
 
 export interface DataForSeoApi {
   /** Escape hatch for endpoints without a wrapper yet. Still cached + metered. */
   client: DataForSeoClient;
   keywordsData: KeywordsDataApi;
   labs: LabsApi;
+  serp: SerpApi;
+  /** The zero-cost reference lists. The only globally-cached family. */
+  meta: MetaApi;
 }
 
 /** Binds an already-resolved client to the typed wrappers. */
@@ -37,6 +47,8 @@ export function createDataForSeoApiFromClient(
     client,
     keywordsData: createKeywordsDataApi(client),
     labs: createLabsApi(client),
+    serp: createSerpApi(client),
+    meta: createMetaApi(client),
   };
 }
 

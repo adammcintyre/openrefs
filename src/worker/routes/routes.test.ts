@@ -21,6 +21,10 @@ const MOUNT_PROBES: Record<string, string> = {
   "/auth": "/auth/me",
   "/workspaces": "/workspaces",
   "/usage": "/usage",
+  "/keywords": "/keywords/overview",
+  "/domains": "/domains/overview",
+  "/collections": "/collections",
+  "/meta": "/meta/locations",
   "/dev": "/dev/dfs-smoke",
 };
 
@@ -80,6 +84,31 @@ describe("session guard", () => {
     ["POST", "/workspaces"],
     ["GET", "/workspaces/8f8f0b9e-1f3a-4a2e-9a1a-9a2b3c4d5e6f/members"],
     ["POST", "/workspaces/invites/accept"],
+    // Phase 1. Every one of these can spend money or read tenant data, so the
+    // 401 must land before validation — a caller with no session should never
+    // learn whether their query was well-formed.
+    ["GET", "/keywords/overview"],
+    ["GET", "/keywords/ideas"],
+    ["GET", "/keywords/suggestions"],
+    ["GET", "/keywords/related"],
+    ["GET", "/keywords/serp"],
+    ["GET", "/domains/overview"],
+    ["GET", "/domains/history"],
+    ["GET", "/domains/keywords"],
+    ["GET", "/domains/pages"],
+    ["GET", "/domains/competitors"],
+    ["GET", "/domains/countries"],
+    ["GET", "/collections"],
+    ["POST", "/collections"],
+    ["GET", "/collections/abc"],
+    ["PATCH", "/collections/abc"],
+    ["DELETE", "/collections/abc"],
+    ["POST", "/collections/abc/keywords"],
+    ["DELETE", "/collections/abc/keywords"],
+    ["GET", "/collections/abc/export.csv"],
+    // Free and non-tenant, but still not public.
+    ["GET", "/meta/locations"],
+    ["GET", "/meta/languages"],
   ];
 
   it.each(guarded)(
