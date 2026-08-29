@@ -218,6 +218,24 @@ export const collectionKeywords = sqliteTable(
     keyword: text("keyword").notNull(),
     /** Search volume at the moment it was saved, so lists stay comparable. */
     volumeSnapshot: integer("volume_snapshot"),
+    /*
+     * The market the keyword was saved from, stamped at add time.
+     *
+     * **Nullable, and null is a real value**: every row saved before this
+     * column existed has no market recorded, and there is no honest way to
+     * infer one — the same keyword has different volume in the UK and the US,
+     * so back-filling a guess would attach a wrong market to a real snapshot.
+     * Null therefore means "unknown market", and the UI says so rather than
+     * assuming the workspace default. It is also why a View SERP action needs
+     * a market to fall back on for these rows.
+     *
+     * Not part of the primary key: a collection holds one row per keyword, and
+     * making the market part of the identity would let the same keyword appear
+     * once per market with a different snapshot each — a different feature,
+     * and not the one the UI is built for.
+     */
+    locationCode: integer("location_code"),
+    languageCode: text("language_code"),
     addedAt: integer("added_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

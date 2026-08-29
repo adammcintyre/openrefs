@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { dedupeKeywordEntries, normalizeKeyword } from "./collections";
+import {
+  bulkAddSchema,
+  dedupeKeywordEntries,
+  normalizeKeyword,
+} from "./collections";
 
 describe("normalizeKeyword", () => {
   it("lowercases and trims to the form the primary key dedupes on", () => {
@@ -94,5 +98,48 @@ describe("dedupeKeywordEntries", () => {
       { keyword: "b" },
     ]);
     expect(submitted).toHaveLength(2);
+  });
+});
+
+describe("bulkAddSchema — the market stamp", () => {
+  const keywords = [{ keyword: "photo booth template" }];
+
+  it("accepts a batch with no market at all", () => {
+    // A null market is a supported state, not a degraded one: a pasted list
+    // has no market to report and must not be given an invented one.
+    const parsed = bulkAddSchema.safeParse({ keywords });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.location).toBeUndefined();
+    expect(parsed.data?.language).toBeUndefined();
+  });
+
+  it("accepts both halves of a market together", () => {
+    const parsed = bulkAddSchema.safeParse({
+      keywords,
+      location: 2826,
+      language: "en",
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.location).toBe(2826);
+    expect(parsed.data?.language).toBe("en");
+  });
+
+  it("refuses half a market — it could never be used to re-run a SERP", () => {
+    expect(bulkAddSchema.safeParse({ keywords, location: 2826 }).success).toBe(
+      false,
+    );
+    expect(bulkAddSchema.safeParse({ keywords, language: "en" }).success).toBe(
+      false,
+    );
+  });
+
+  it("still refuses a location that is not a DataForSEO code", () => {
+    expect(
+      bulkAddSchema.safeParse({ keywords, location: "GB", language: "en" })
+        .success,
+    ).toBe(false);
+    expect(
+      bulkAddSchema.safeParse({ keywords, location: 0, language: "en" }).success,
+    ).toBe(false);
   });
 });

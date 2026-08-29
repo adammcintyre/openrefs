@@ -24,6 +24,19 @@ export interface CollectionKeywordRow {
    * against itself over time. Null when the keyword was added without one.
    */
   volumeSnapshot: number | null;
+  /**
+   * The market this keyword was saved from — a DataForSEO location code and
+   * language code, stamped at add time.
+   *
+   * **Null means "unknown market", not a default.** Rows saved before the
+   * market was recorded carry null, and there is nothing to infer one from: the
+   * same keyword has a different volume in every market, so guessing would
+   * attach a wrong market to a real snapshot. The UI must show these as
+   * unknown, and anything needing a market for such a row (View SERP, say) has
+   * to ask for one rather than assume.
+   */
+  locationCode: number | null;
+  languageCode: string | null;
   /** ISO 8601. */
   addedAt: string;
 }

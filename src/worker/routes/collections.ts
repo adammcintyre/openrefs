@@ -4,7 +4,7 @@
  *   GET    /api/v1/collections/:id           one collection, with keywords
  *   PATCH  /api/v1/collections/:id           rename
  *   DELETE /api/v1/collections/:id           delete (keywords cascade)
- *   POST   /api/v1/collections/:id/keywords  bulk add, idempotent
+ *   POST   /api/v1/collections/:id/keywords  bulk add, idempotent, market-stamped
  *   DELETE /api/v1/collections/:id/keywords  bulk remove
  *   GET    /api/v1/collections/:id/export.csv
  *
@@ -61,9 +61,40 @@ const keywordEntrySchema = z.object({
   volumeSnapshot: z.number().int().min(0).nullish(),
 });
 
-const bulkAddSchema = z.object({
-  keywords: z.array(keywordEntrySchema).min(1).max(COLLECTION_KEYWORDS_BULK_MAX),
+/**
+ * The market to stamp on this batch, if the caller knows one.
+ *
+ * Optional, and one market per request rather than per keyword: a bulk add
+ * comes from one screen showing one market's numbers, so the volume snapshots
+ * in a single call are all from the same place. Omitting it stores null —
+ * "unknown market" — which is exactly what an older client (or a save from a
+ * context with no market, like a pasted list) should record rather than
+ * inventing a default.
+ */
+const marketSchema = z.object({
+  location: z.number().int().positive().optional(),
+  language: z.string().trim().min(2).max(8).optional(),
 });
+
+export const bulkAddSchema = z
+  .object({
+    keywords: z.array(keywordEntrySchema).min(1).max(COLLECTION_KEYWORDS_BULK_MAX),
+  })
+  .extend(marketSchema.shape)
+  /*
+   * Both halves or neither. A location code with no language (or the reverse)
+   * is not a market — every DataForSEO query needs both — and storing half of
+   * one would produce rows that look stamped but cannot be used to re-run a
+   * SERP.
+   */
+  .refine(
+    (body) => (body.location === undefined) === (body.language === undefined),
+    {
+      message:
+        "Give both `location` and `language`, or neither — half a market cannot be used.",
+      path: ["location"],
+    },
+  );
 
 const bulkRemoveSchema = z.object({
   keywords: z
@@ -137,6 +168,8 @@ collectionsRouter.get("/:id", async (c) => {
     .select({
       keyword: collectionKeywords.keyword,
       volumeSnapshot: collectionKeywords.volumeSnapshot,
+      locationCode: collectionKeywords.locationCode,
+      languageCode: collectionKeywords.languageCode,
       addedAt: collectionKeywords.addedAt,
     })
     .from(collectionKeywords)
@@ -151,6 +184,11 @@ collectionsRouter.get("/:id", async (c) => {
     keywords: keywords.map((row) => ({
       keyword: row.keyword,
       volumeSnapshot: row.volumeSnapshot,
+      // Null for anything saved before markets were stamped. See the field
+      // note in src/shared/collections.ts: that null is "unknown", and the UI
+      // must not paper over it with the workspace default.
+      locationCode: row.locationCode,
+      languageCode: row.languageCode,
       addedAt: row.addedAt.toISOString(),
     })),
   };
@@ -226,7 +264,7 @@ collectionsRouter.post("/:id/keywords", async (c) => {
   const { workspace } = readQuery(c, workspaceQuerySchema);
   const { id } = readParams(c, idParamSchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), workspace);
-  const { keywords } = await readJson(c, bulkAddSchema);
+  const { keywords, location, language } = await readJson(c, bulkAddSchema);
 
   await requireCollection(db, workspace, id);
 
@@ -240,6 +278,13 @@ collectionsRouter.post("/:id/keywords", async (c) => {
         collectionId: id,
         keyword: entry.keyword,
         volumeSnapshot: entry.volumeSnapshot ?? null,
+        // Stamped from the request, null when the caller had no market to
+        // give. Note this rides on `onConflictDoNothing` below: re-adding an
+        // existing keyword from a different market does NOT restamp it, for
+        // the same reason it does not overwrite the volume snapshot — the
+        // first save is the one the snapshot belongs to.
+        locationCode: location ?? null,
+        languageCode: language ?? null,
       })),
     )
     .onConflictDoNothing();
@@ -310,6 +355,8 @@ collectionsRouter.get("/:id/export.csv", async (c) => {
     .select({
       keyword: collectionKeywords.keyword,
       volumeSnapshot: collectionKeywords.volumeSnapshot,
+      locationCode: collectionKeywords.locationCode,
+      languageCode: collectionKeywords.languageCode,
       addedAt: collectionKeywords.addedAt,
     })
     .from(collectionKeywords)
@@ -317,10 +364,15 @@ collectionsRouter.get("/:id/export.csv", async (c) => {
     .orderBy(desc(collectionKeywords.addedAt));
 
   const csv = toCsv(
-    ["keyword", "volume_snapshot", "added_at"],
+    ["keyword", "volume_snapshot", "location_code", "language_code", "added_at"],
     rows.map((row) => [
       row.keyword,
       row.volumeSnapshot,
+      // Empty cells for a row with no market, matching how the table shows it:
+      // a spreadsheet must not turn "unknown" into a location code nobody
+      // chose.
+      row.locationCode,
+      row.languageCode,
       row.addedAt.toISOString(),
     ]),
   );
