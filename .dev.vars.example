@@ -5,8 +5,9 @@
 #   wrangler secret put DATAFORSEO_PASSWORD
 
 # AES-256-GCM key used to encrypt per-workspace DataForSEO credentials at rest.
-# Generate a fresh one: openssl rand -base64 32
-APP_MASTER_KEY="replace-me-with-32-random-bytes-base64"
+# Must be 32 bytes as HEX — exactly 64 hex characters (src/worker/lib/crypto.ts
+# rejects anything else). Generate a fresh one: openssl rand -hex 32
+APP_MASTER_KEY="replace-me-with-64-hex-characters"
 
 # Dev fallback DataForSEO credentials, used when a workspace has none stored.
 # Get yours at https://dataforseo.com — OpenRefs never ships or proxies a key.
