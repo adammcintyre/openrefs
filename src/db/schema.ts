@@ -61,7 +61,7 @@ export type Device = (typeof DEVICES)[number];
 export const users = sqliteTable("users", {
   id: id(),
   email: text("email").notNull().unique(),
-  /** PBKDF2-SHA256, 600k iterations. Format owned by the auth module. */
+  /** PBKDF2-SHA256, 100k iterations (Workers cap). Format owned by crypto.ts. */
   passwordHash: text("password_hash").notNull(),
   createdAt: createdAt(),
 });

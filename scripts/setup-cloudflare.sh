@@ -152,15 +152,18 @@ D1_ID="$d1_id" KV_ID="$kv_id" node -e '
 # ---------------------------------------------------------------------------
 bold "Secrets you must set yourself"
 cat <<'EOF'
-  These are prompted for interactively so they never touch your shell history,
-  this repository, or a CI log. Run all three:
+  Prompted for interactively so they never touch your shell history, this
+  repository, or a CI log. One secret is required:
 
     npx wrangler secret put APP_MASTER_KEY
-    npx wrangler secret put DATAFORSEO_LOGIN
-    npx wrangler secret put DATAFORSEO_PASSWORD
 
-  APP_MASTER_KEY encrypts workspace DataForSEO credentials at rest.
-  Generate one with:  openssl rand -base64 32
+  DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD are a LOCAL-DEV-ONLY fallback
+  (.dev.vars): production ignores them by design — every workspace brings its
+  own DataForSEO credentials via Settings, so do not set them as secrets.
+
+  APP_MASTER_KEY encrypts workspace DataForSEO credentials at rest. It must be
+  32 bytes as HEX — exactly 64 hex characters (src/worker/lib/crypto.ts rejects
+  anything else). Generate one with:  openssl rand -hex 32
 EOF
 
 # ---------------------------------------------------------------------------

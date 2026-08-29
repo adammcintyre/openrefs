@@ -30,9 +30,10 @@
     {
       "binding": "DB",
       "database_name": "openrefs-db",
-      // Placeholder. `scripts/setup-cloudflare.sh` creates the database and
-      // replaces this id with the real one. Never commit a real account's id.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Our hosted instance's id. Resource ids are not secrets (useless
+      // without an API token). Self-hosters: scripts/setup-cloudflare.sh
+      // creates your own database and rewrites this id.
+      "database_id": "38b9481c-07c4-4073-897f-6c48a6f9df30",
       "migrations_dir": "migrations"
     }
   ],
@@ -40,8 +41,8 @@
   "kv_namespaces": [
     {
       "binding": "CACHE",
-      // Placeholder — replaced by scripts/setup-cloudflare.sh.
-      "id": "00000000000000000000000000000000"
+      // Our hosted instance's id — rewritten by scripts/setup-cloudflare.sh.
+      "id": "7e8188d5001941f4be0d096747c55c3d"
     }
   ],
 
@@ -51,6 +52,10 @@
       "bucket_name": "openrefs-blobs"
     }
   ],
+
+  // Our hosted instance. Self-hosters replace or delete this block — without
+  // it the Worker still deploys to its workers.dev subdomain.
+  "routes": [{ "pattern": "openrefs.adamm.io", "custom_domain": true }],
 
   // Background work is cron + the D1 `jobs` table (no Queues / Durable Objects,
   // so self-hosting stays on the Cloudflare free plan).

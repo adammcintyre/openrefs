@@ -6,7 +6,7 @@ One Cloudflare Worker runs everything: a Hono JSON API under `/api/v1` plus the 
 
 - License **AGPL-3.0**. Hosted-only features (Stripe billing) behind config flags, off by default for self-host.
 - **Per-workspace caching** — cached DataForSEO responses are keyed per workspace and never shared across tenants.
-- Auth: **email + password only** (PBKDF2-SHA256, 600k iterations, WebCrypto). Cookie sessions, httpOnly + secure. Google OAuth exists only as the Search Console data connection (Phase 5), not for login.
+- Auth: **email + password only** (PBKDF2-SHA256, 100k iterations — the Cloudflare Workers runtime cap, which local dev does not enforce; WebCrypto). Cookie sessions, httpOnly + secure. Google OAuth exists only as the Search Console data connection (Phase 5), not for login.
 - Default markets UK + US (`location_code` 2826 / 2840 — verify codes against the API), all DataForSEO locations selectable per query.
 - Build order: see `docs/PLAN.md`.
 

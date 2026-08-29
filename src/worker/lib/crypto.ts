@@ -79,7 +79,15 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
 /* ------------------------- password hashing ------------------------------- */
 
-export const PBKDF2_ITERATIONS = 600_000;
+/**
+ * The Cloudflare Workers runtime refuses PBKDF2 above 100,000 iterations
+ * (NotSupportedError) — this is the platform maximum, not a tunable. Do not
+ * raise it: local dev (workerd via the Vite plugin) does NOT enforce the cap,
+ * so a higher value passes every local test and then 500s in production.
+ * The stored format records its iteration count, so existing hashes keep
+ * verifying if this constant ever changes.
+ */
+export const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_HASH_BYTES = 32;
 const SALT_BYTES = 16;
 
@@ -138,13 +146,16 @@ export async function verifyPassword(
   }
   let salt: Uint8Array;
   let expected: Uint8Array;
+  let actual: Uint8Array;
   try {
     salt = base64ToBytes(parts[3] ?? "");
     expected = base64ToBytes(parts[4] ?? "");
+    // deriveBits itself can reject (e.g. a stored hash above the runtime's
+    // iteration cap) — an unverifiable hash is a failed login, not a 500.
+    actual = await pbkdf2(password, salt, iterations);
   } catch {
     return false;
   }
-  const actual = await pbkdf2(password, salt, iterations);
   if (expected.length !== actual.length) return false;
   let diff = 0;
   for (let i = 0; i < actual.length; i++) diff |= (actual[i] ?? 0) ^ (expected[i] ?? 0);

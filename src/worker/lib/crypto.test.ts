@@ -59,7 +59,7 @@ describe("tokens", () => {
 describe("password hashing", () => {
   it("verifies a correct password at full production cost", async () => {
     const stored = await hashPassword("correct horse battery staple");
-    expect(stored).toMatch(/^pbkdf2\$sha256\$600000\$/);
+    expect(stored).toMatch(/^pbkdf2\$sha256\$100000\$/);
     await expect(
       verifyPassword("correct horse battery staple", stored),
     ).resolves.toBe(true);
