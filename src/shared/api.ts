@@ -30,6 +30,16 @@ export const ERROR_STATUS = {
   internal_error: 500,
   not_implemented: 501,
   upstream_error: 502,
+
+  /* Auth + workspaces (Phase 0). */
+  /** Wrong password, or an email nobody has registered — deliberately one code. */
+  invalid_credentials: 401,
+  /** Registration hit the `users.email` unique constraint. */
+  email_taken: 409,
+  /** Login rate limit tripped for this email. */
+  too_many_attempts: 429,
+  /** Invite token is unknown, already redeemed, or past `expires_at`. */
+  invite_invalid: 410,
 } as const;
 
 export type ApiErrorCode = keyof typeof ERROR_STATUS;
