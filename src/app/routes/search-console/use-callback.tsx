@@ -11,6 +11,13 @@
  * has to outlive the parameter that produced it, or it would flash and vanish
  * in the same frame.
  *
+ * That state is *seeded* from the first render's query string rather than only
+ * being filled in by the effect. Effects run after paint, so deriving it in the
+ * effect alone would show the user a page that looks like an ordinary failed
+ * connection attempt for a frame before the explanation arrived — and would
+ * make the notice invisible to a server render, which is how this module's
+ * states are tested.
+ *
  * **A cancellation produces nothing at all** — no toast, no notice, no state.
  * `access_denied` means the user read Google's consent screen and said no. They
  * know what happened; the Connect button is still on screen if they change
@@ -35,6 +42,14 @@ interface CallbackNotice {
   body: string;
 }
 
+/** The notice a query string deserves, if any. Shared by the seed and the effect. */
+function noticeFor(search: string): CallbackNotice | null {
+  const outcome = readGscCallback(search);
+  return outcome.kind === "failed"
+    ? { title: outcome.title, body: outcome.body }
+    : null;
+}
+
 export function useGscCallback({
   workspaceId,
   projectId,
@@ -46,9 +61,12 @@ export function useGscCallback({
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const [notice, setNotice] = useState<CallbackNotice | null>(null);
-
   const search = searchParams.toString();
+
+  // Seeded from the first render, then maintained by the effect below.
+  const [notice, setNotice] = useState<CallbackNotice | null>(() =>
+    noticeFor(search),
+  );
 
   useEffect(() => {
     if (!hasGscCallbackParams(search)) return;
@@ -69,13 +87,11 @@ export function useGscCallback({
        * cached report under it describes a state that no longer exists.
        */
       void queryClient.invalidateQueries({ queryKey: gscKeys.all });
-      setNotice(null);
-    } else if (outcome.kind === "failed") {
-      setNotice({ title: outcome.title, body: outcome.body });
-    } else {
-      // "cancelled" and "none": nothing to say.
-      setNotice(null);
     }
+
+    // "cancelled" resolves to null here, which is the whole point: the user
+    // said no and does not need telling.
+    setNotice(noticeFor(search));
 
     // Consume the parameters. Left in place, a reload would re-announce a
     // success that already happened or a failure that has since been fixed.
