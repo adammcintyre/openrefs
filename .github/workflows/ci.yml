@@ -4,6 +4,8 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # Manual retrigger, e.g. after a billing/budget fix.
+  workflow_dispatch:
 
 # A newer push to the same branch makes the in-flight run pointless.
 concurrency:

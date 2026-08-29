@@ -6,8 +6,8 @@ Each phase ships behind a review: spec → implementation (parallel agents on di
 
 - [x] Repo scaffold: single package, Worker (Hono) + SPA (Vite/React/Tailwind v4) via `@cloudflare/vite-plugin`, wrangler.jsonc with D1/KV/R2/assets/cron bindings, strict TS, vitest, CI workflow, AGPL LICENSE, README
 - [x] Drizzle schema + initial migration (core tables per ARCHITECTURE.md), local migrations working
-- [ ] Auth + workspaces: register/login/logout (PBKDF2 + cookie sessions), workspace CRUD, members + roles, invites (link-based; email delivery lands later via SendGrid), API keys, full deletion cascade
-- [ ] DataForSEO client: basic-auth fetch wrapper, per-workspace credential store (AES-GCM), KV cache with TTL table, cost metering + spend caps, `/api/v1/usage`, balance endpoint, sandbox mode for tests
+- [x] Auth + workspaces: register/login/logout (PBKDF2 + cookie sessions), workspace CRUD, members + roles, invites (link-based; email delivery lands later via SendGrid), API keys, full deletion cascade
+- [x] DataForSEO client: basic-auth fetch wrapper, per-workspace credential store (AES-GCM), KV cache with TTL table, cost metering + spend caps, `/api/v1/usage`, balance endpoint, sandbox mode for tests
 - [ ] App shell + design system: Lush Forest theme (light/dark), sidebar nav (all modules listed, unbuilt ones disabled), auth pages, workspace settings pages, reusable DataTable/MetricCard/chart wrappers/empty states
 - [ ] Deploy pipeline: setup script creating real D1/KV/R2, first deploy to openrefs.adamm.io
 

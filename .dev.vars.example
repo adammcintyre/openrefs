@@ -4,12 +4,19 @@
 #   wrangler secret put DATAFORSEO_LOGIN
 #   wrangler secret put DATAFORSEO_PASSWORD
 
+# Enables dev-only behaviour: the DataForSEO env-credential fallback below and
+# the /api/v1/dev/* smoke routes. Deployed Workers get "production" from
+# wrangler.jsonc `vars` — never set this to "development" on a hosted deploy,
+# or tenants without their own key would spend on yours.
+APP_ENV=development
+
 # AES-256-GCM key used to encrypt per-workspace DataForSEO credentials at rest.
 # Must be 32 bytes as HEX — exactly 64 hex characters (src/worker/lib/crypto.ts
 # rejects anything else). Generate a fresh one: openssl rand -hex 32
 APP_MASTER_KEY="replace-me-with-64-hex-characters"
 
 # Dev fallback DataForSEO credentials, used when a workspace has none stored.
+# Only ever read when APP_ENV=development (see dataforseo/credentials.ts).
 # Get yours at https://dataforseo.com — OpenRefs never ships or proxies a key.
 DATAFORSEO_LOGIN="you@example.com"
 DATAFORSEO_PASSWORD="replace-me"

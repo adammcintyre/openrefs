@@ -21,15 +21,20 @@ const MOUNT_PROBES: Record<string, string> = {
   "/auth": "/auth/me",
   "/workspaces": "/workspaces",
   "/usage": "/usage",
+  "/dev": "/dev/dfs-smoke",
 };
 
 describe("route registry", () => {
   it("mounts every module under the versioned prefix", async () => {
+    // A development env so /dev is visible; see dev.test.ts for the gate
+    // itself. No binding is touched — every module answers this bare request
+    // from validation or a stub, before it reaches D1.
+    const env = { APP_ENV: "development" } as Env;
     for (const { path } of routeModules) {
       const probe = MOUNT_PROBES[path];
       expect(probe, `add a MOUNT_PROBES entry for ${path}`).toBeDefined();
 
-      const res = await app.request(`${API_PREFIX}${probe as string}`);
+      const res = await app.request(`${API_PREFIX}${probe as string}`, undefined, env);
       expect(res.status, `${path} should be mounted`).not.toBe(404);
     }
   });
@@ -64,26 +69,6 @@ describe("GET /api/v1/health", () => {
   it("stays public — health checks have no session", async () => {
     const res = await app.request(`${API_PREFIX}/health`);
     expect(res.status).not.toBe(401);
-  });
-});
-
-describe("unimplemented module stubs", () => {
-  const stubs = ["/usage"];
-
-  it.each(stubs)("%s responds 501 with code not_implemented", async (path) => {
-    const res = await app.request(`${API_PREFIX}${path}`);
-    expect(res.status).toBe(501);
-
-    const body: unknown = await res.json();
-    expect(isApiErrorBody(body)).toBe(true);
-    expect(body).toMatchObject({ error: { code: "not_implemented" } });
-  });
-
-  it.each(stubs)("%s stubs every sub-path and method", async (path) => {
-    const res = await app.request(`${API_PREFIX}${path}/anything/deep`, {
-      method: "POST",
-    });
-    expect(res.status).toBe(501);
   });
 });
 
