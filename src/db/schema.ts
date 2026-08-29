@@ -274,8 +274,19 @@ export const rankSnapshots = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [
-    // The history chart's only query shape: one keyword, ordered by date.
-    index("rank_snapshots_keyword_date_idx").on(t.trackedKeywordId, t.date),
+    /*
+     * One row per keyword per day, enforced rather than hoped for. Phase 0 left
+     * this as a plain index and deferred the constraint; the rank collector
+     * upserts with `ON CONFLICT (tracked_keyword_id, date) DO UPDATE`, which
+     * needs a UNIQUE index to conflict *against* — without it a re-run of the
+     * same day's check silently appends a second row and every "previous
+     * position" delta reads as zero.
+     *
+     * It replaces the old non-unique index rather than sitting beside it: the
+     * columns and order are identical, so it serves the history chart's query
+     * ("one keyword, ordered by date") exactly as well.
+     */
+    uniqueIndex("rank_snapshots_keyword_date_idx").on(t.trackedKeywordId, t.date),
   ],
 );
 
