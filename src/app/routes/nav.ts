@@ -29,6 +29,8 @@ export interface NavItem {
   description: string;
   /** Which docs/PLAN.md phase builds it. */
   phase: number;
+  /** Has a real route today, rather than the ComingSoon placeholder. */
+  live: boolean;
   icon: LucideIcon;
 }
 
@@ -43,6 +45,7 @@ export const DASHBOARD_ITEM: NavItem = {
   label: "Dashboard",
   description: "Workspace activity, recent research and spend at a glance.",
   phase: 1,
+  live: true,
   icon: LayoutDashboard,
 };
 
@@ -53,6 +56,7 @@ export const SETTINGS_ITEM: NavItem = {
   description:
     "Members and roles, API keys, your DataForSEO credentials and the workspace spend cap.",
   phase: 0,
+  live: true,
   icon: Settings,
 };
 
@@ -66,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Search volume, history, difficulty, intent and CPC, plus ideas, related terms and suggestions.",
         phase: 1,
+        live: true,
         icon: Search,
       },
       {
@@ -74,6 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Traffic estimate, Domain Score, top organic keywords, top pages and competitors for any domain.",
         phase: 1,
+        live: true,
         icon: Globe,
       },
       {
@@ -82,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Referring domains, anchors, new and lost links, and history for any target.",
         phase: 2,
+        live: true,
         icon: Link2,
       },
       {
@@ -90,6 +97,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Keywords your competitors rank for and you do not, across multiple domains.",
         phase: 2,
+        live: true,
         icon: GitCompareArrows,
       },
       {
@@ -98,6 +106,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Topic search enriched with traffic estimates and referring domains, filtered for low competition.",
         phase: 7,
+        live: false,
         icon: Compass,
       },
     ],
@@ -111,6 +120,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Daily positions for tracked keywords by device and location, with movers and SERP features.",
         phase: 3,
+        live: false,
         icon: TrendingUp,
       },
       {
@@ -119,6 +129,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Crawl your site for speed, indexability, metadata, duplicates, links and structured data issues.",
         phase: 4,
+        live: false,
         icon: ClipboardCheck,
       },
       {
@@ -127,6 +138,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Bind a Google property and surface striking-distance, low-CTR and cannibalisation reports.",
         phase: 5,
+        live: false,
         icon: ChartLine,
       },
       {
@@ -135,6 +147,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Track whether AI engines mention and cite your site across a set of prompts.",
         phase: 6,
+        live: false,
         icon: Sparkles,
       },
     ],
