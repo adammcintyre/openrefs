@@ -103,6 +103,41 @@ describe("highlightSegments", () => {
     expect(highlightSegments("", ["brandpacks"])).toEqual([]);
   });
 
+  /*
+   * A real payload, copied from a live Perplexity run against brandpacks.com
+   * on 2026-08-29 (`mentionTerms: ["brandpacks.com"]`). Two things about it
+   * would have been easy to get wrong from the type alone: the answer is
+   * markdown, so the term arrives wrapped in asterisks that must stay outside
+   * the mark; and the same term recurs later in the text, so a first-hit-only
+   * implementation would highlight one of three.
+   */
+  it("marks a real mention inside markdown without swallowing the syntax", () => {
+    const excerpt =
+      "**brandpacks.com** is a website for **graphic design templates** " +
+      "aimed at designers.[1][3] They sell editable templates. " +
+      "Visit brandpacks.com for downloads.";
+
+    const segments = highlightSegments(excerpt, ["brandpacks.com"]);
+
+    expect(matches(segments)).toEqual(["brandpacks.com", "brandpacks.com"]);
+    // The asterisks are the answer's own markdown and belong to the plain
+    // runs either side, not to the highlight.
+    expect(segments[0]).toEqual({ text: "**", match: false });
+    expect(rejoin(segments)).toBe(excerpt);
+  });
+
+  /*
+   * The other real shape: every snapshot from a run where the domain was not
+   * mentioned arrives with `mentionTerms: []`. Observed on three of four live
+   * snapshots, so this is the common case, not an edge case.
+   */
+  it("renders an unmentioned answer as one plain run", () => {
+    const excerpt = "Some good options are Canva and Adobe Express.";
+    expect(highlightSegments(excerpt, [])).toEqual([
+      { text: excerpt, match: false },
+    ]);
+  });
+
   it("never drops or duplicates text, whatever the terms", () => {
     const excerpt =
       "BrandPacks.com and brandpacks and BRANDPACKS.COM, plus templatesbooth.com.";
