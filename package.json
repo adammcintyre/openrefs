@@ -15,7 +15,7 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply openrefs-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply openrefs-db",
+    "db:migrate:remote": "wrangler d1 migrations apply openrefs-db --remote",
     "types": "wrangler types",
     "deploy": "npm run build && wrangler deploy"
   },
