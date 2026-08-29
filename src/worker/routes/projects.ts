@@ -54,6 +54,7 @@ import {
 } from "../../shared/tracking";
 import { ApiException } from "../http";
 import { enqueueJob, hasQueuedJobForProject } from "../jobs";
+import { deleteProjectEverywhere } from "../lib/deletion";
 import { projectAuditsRouter } from "./audits";
 import { authorizeWorkspace, normalizeDomain, workspaceParam } from "../lib/research";
 import { readJson, readParams, readQuery } from "../lib/validate";
@@ -197,14 +198,23 @@ projectsRouter.delete("/:id", async (c) => {
 
   await requireProject(db, workspace, id);
 
-  // tracked_keywords → rank_snapshots, audits and ai_prompts all cascade from
-  // this FK (see db/schema.ts), so the children go with it. Queued jobs carry
-  // `workspace_id` and cascade from the workspace, not the project, so a
-  // rank_post for a deleted project can still be claimed — both rank handlers
-  // treat a missing project as "nothing to do" rather than an error.
-  await db
-    .delete(projects)
-    .where(and(eq(projects.id, id), eq(projects.workspaceId, workspace)));
+  // tracked_keywords → rank_snapshots, audits, ai_prompts and gsc_connections
+  // all cascade from this FK (see db/schema.ts), so the children go with it.
+  // Queued jobs carry `workspace_id` and cascade from the workspace, not the
+  // project, so a rank_post for a deleted project can still be claimed — both
+  // rank handlers treat a missing project as "nothing to do" rather than an
+  // error.
+  //
+  // What the cascade cannot reach is the Google OAuth grant behind
+  // `gsc_connections` and the project's KV keys, which is why this goes through
+  // the deletion module rather than deleting the row here: dropping the row
+  // first would destroy the only copy of the refresh token that could revoke
+  // the grant. Both cleanups are best-effort and neither can block the delete.
+  await deleteProjectEverywhere(
+    { db, kv: c.env.CACHE, masterKey: c.env.APP_MASTER_KEY },
+    workspace,
+    id,
+  );
 
   const body: ProjectDeletedResponse = { deleted: true, id };
   return c.json(body);

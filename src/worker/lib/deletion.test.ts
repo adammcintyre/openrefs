@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "../../db";
-import { revokeWorkspaceGoogleTokens } from "../gsc/tokens";
+import { projects } from "../../db";
 import {
+  purgeProjectGscKv,
+  revokeProjectGoogleToken,
+  revokeWorkspaceGoogleTokens,
+} from "../gsc/tokens";
+import {
+  deleteProjectEverywhere,
   deleteWorkspaceEverywhere,
   purgeWorkspaceKv,
   purgeWorkspaceR2,
@@ -11,23 +17,31 @@ import {
 } from "./deletion";
 
 /**
- * The Google revocation sweep is stubbed here so this file can test the
- * *cascade's* contract — that revocation happens, before the row goes, and
- * that it cannot stop the deletion. The sweep's own behaviour against a
- * failing Google is tested in src/worker/gsc/tokens.test.ts.
+ * The Search Console cleanups are stubbed here so this file can test the
+ * *cascade's* contract — that they happen, before the rows go, and that they
+ * cannot stop the deletion. Their own behaviour against a failing Google and a
+ * real KV layout is tested in src/worker/gsc/tokens.test.ts.
  */
 vi.mock("../gsc/tokens", () => ({
   revokeWorkspaceGoogleTokens: vi.fn(async () => ({
     attempted: 0,
     revoked: 0,
   })),
+  revokeProjectGoogleToken: vi.fn(async () => ({ attempted: 0, revoked: 0 })),
+  purgeProjectGscKv: vi.fn(async () => 0),
 }));
 
 const mockRevoke = vi.mocked(revokeWorkspaceGoogleTokens);
+const mockRevokeProject = vi.mocked(revokeProjectGoogleToken);
+const mockPurgeProjectKv = vi.mocked(purgeProjectGscKv);
 
 beforeEach(() => {
   mockRevoke.mockReset();
   mockRevoke.mockResolvedValue({ attempted: 0, revoked: 0 });
+  mockRevokeProject.mockReset();
+  mockRevokeProject.mockResolvedValue({ attempted: 0, revoked: 0 });
+  mockPurgeProjectKv.mockReset();
+  mockPurgeProjectKv.mockResolvedValue(0);
 });
 
 const MASTER_KEY = "a".repeat(64);
@@ -339,5 +353,186 @@ describe("deleteWorkspaceEverywhere", () => {
     expect(consoleError).toHaveBeenCalled();
 
     consoleError.mockRestore();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe("deleteProjectEverywhere", () => {
+  const PROJECT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+  /** Records when the project row was dropped, and from which table. */
+  function trackingDb(order: string[], tables: unknown[]): Db {
+    return {
+      delete: (table: unknown) => {
+        tables.push(table);
+        return {
+          where: async () => {
+            order.push("d1");
+          },
+        };
+      },
+    } as unknown as Db;
+  }
+
+  function stores(order: string[]) {
+    mockRevokeProject.mockImplementation(async () => {
+      order.push("revoke");
+      return { attempted: 1, revoked: 1 };
+    });
+    mockPurgeProjectKv.mockImplementation(async () => {
+      order.push("kv");
+      return 3;
+    });
+    return {
+      db: trackingDb(order, []),
+      kv: {} as KVNamespace,
+      masterKey: MASTER_KEY,
+    };
+  }
+
+  it("revokes the grant BEFORE the cascade drops the row holding it", async () => {
+    // `gsc_connections.project_id` cascades from `projects`, so the encrypted
+    // refresh token dies with this DELETE. Revoking afterwards is not "late",
+    // it is impossible — the grant would sit in the user's Google account with
+    // nothing left able to revoke it.
+    const order: string[] = [];
+
+    const result = await deleteProjectEverywhere(stores(order), WS, PROJECT);
+
+    expect(order.indexOf("revoke")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("revoke")).toBeLessThan(order.indexOf("d1"));
+    expect(order.at(-1)).toBe("d1");
+    expect(result).toEqual({
+      reportCacheKeys: 3,
+      googleGrants: { attempted: 1, revoked: 1 },
+    });
+  });
+
+  it("purges KV before the row goes too", async () => {
+    // Same argument, weaker consequence: a cached access token outliving its
+    // project by up to 50 minutes, and a day of a deleted project's Search
+    // Console data. Nothing in D1 can reach either afterwards.
+    const order: string[] = [];
+
+    await deleteProjectEverywhere(stores(order), WS, PROJECT);
+
+    expect(order.indexOf("kv")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("kv")).toBeLessThan(order.indexOf("d1"));
+  });
+
+  it("deletes exactly one row, from projects", async () => {
+    const order: string[] = [];
+    const tables: unknown[] = [];
+
+    await deleteProjectEverywhere(
+      { db: trackingDb(order, tables), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    expect(order.filter((step) => step === "d1")).toHaveLength(1);
+    expect(tables).toEqual([projects]);
+  });
+
+  it("scopes both cleanups to the workspace, not the project id alone", async () => {
+    // `gsc_connections` has no workspace column. Passing the project id on its
+    // own would let another tenant's connection be found by id.
+    await deleteProjectEverywhere(
+      { db: trackingDb([], []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    expect(mockRevokeProject).toHaveBeenCalledWith(
+      expect.anything(),
+      MASTER_KEY,
+      WS,
+      PROJECT,
+    );
+    expect(mockPurgeProjectKv).toHaveBeenCalledWith(
+      expect.anything(),
+      WS,
+      PROJECT,
+    );
+  });
+
+  it("still deletes the project when revocation throws outright", async () => {
+    // The user asked for their project to be deleted. Google being unreachable
+    // must not be able to veto that.
+    const order: string[] = [];
+    mockRevokeProject.mockRejectedValue(new Error("google is down"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const result = await deleteProjectEverywhere(
+      { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    expect(order).toContain("d1");
+    expect(result.googleGrants).toEqual({ attempted: 0, revoked: 0 });
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
+  });
+
+  it("still deletes the project when the KV purge throws outright", async () => {
+    const order: string[] = [];
+    mockPurgeProjectKv.mockRejectedValue(new Error("kv unavailable"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const result = await deleteProjectEverywhere(
+      { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    expect(order).toContain("d1");
+    expect(result.reportCacheKeys).toBe(0);
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
+  });
+
+  it("deletes the project even when both cleanups fail at once", async () => {
+    const order: string[] = [];
+    mockRevokeProject.mockRejectedValue(new Error("google is down"));
+    mockPurgeProjectKv.mockRejectedValue(new Error("kv unavailable"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    await expect(
+      deleteProjectEverywhere(
+        { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+        WS,
+        PROJECT,
+      ),
+    ).resolves.toEqual({
+      reportCacheKeys: 0,
+      googleGrants: { attempted: 0, revoked: 0 },
+    });
+    expect(order).toContain("d1");
+
+    consoleError.mockRestore();
+  });
+
+  it("reports what Google accepted", async () => {
+    mockRevokeProject.mockResolvedValue({ attempted: 1, revoked: 0 });
+
+    const result = await deleteProjectEverywhere(
+      { db: trackingDb([], []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    // attempted without revoked is the ordinary "Google said no" outcome — an
+    // already-dead grant is indistinguishable from one that never existed.
+    expect(result.googleGrants).toEqual({ attempted: 1, revoked: 0 });
   });
 });

@@ -140,7 +140,27 @@ export async function pullCacheKey(
   range: { from: string; to: string },
 ): Promise<string> {
   const propertyHash = (await sha256Hex(property)).slice(0, 16);
-  return `ws:${workspaceId}:gsc:${projectId}:${propertyHash}:${dimensions}:${range.from}:${range.to}`;
+  return `${projectPullCachePrefix(workspaceId, projectId)}${propertyHash}:${dimensions}:${range.from}:${range.to}`;
+}
+
+/**
+ * Everything `pullCacheKey` can produce for one project, as a KV list prefix.
+ *
+ * The property hash, dimensions and dates all sit *after* the project id, so
+ * one prefix reaches every cached pull a project has ever made regardless of
+ * which property it was pointed at or which windows were asked for. That is
+ * what makes deleting a project able to take its report cache with it rather
+ * than leaving up to 24 hours of a deleted project's Search Console data in KV
+ * (see `purgeProjectGscKv` in ./tokens.ts).
+ *
+ * The trailing colon matters: without it `project-1` would also match
+ * `project-10`.
+ */
+export function projectPullCachePrefix(
+  workspaceId: string,
+  projectId: string,
+): string {
+  return `ws:${workspaceId}:gsc:${projectId}:`;
 }
 
 /** What goes into KV. Versioned so the shape can change without stale reads. */

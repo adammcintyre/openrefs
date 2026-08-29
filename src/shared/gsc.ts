@@ -296,11 +296,32 @@ export type GscOpportunity =
   | GscLowCtrOpportunity
   | GscCannibalizationOpportunity;
 
+/**
+ * One opportunity list, plus the size of the set it was cut from.
+ *
+ * Every rule caps its output (see `OPPORTUNITY_LIMIT` in
+ * src/worker/gsc/opportunities.ts): a 5,000-row pull can match well over a
+ * thousand times, and nobody works through that. Without `total` the cap is
+ * invisible — a truncated list is indistinguishable from a complete one, so
+ * "200 striking-distance keywords" reads as the whole picture when it may be a
+ * quarter of it.
+ *
+ * `total` counts the matches **before** the cap, which is what lets the UI say
+ * "showing 200 of 843". `total > items.length` is the truncation test; the two
+ * are equal whenever the list is complete.
+ */
+export interface GscOpportunityList<T> {
+  /** The rows the UI renders: already sorted, already capped. */
+  items: T[];
+  /** Matches before the cap. Never less than `items.length`. */
+  total: number;
+}
+
 /** GET /api/v1/gsc/opportunities */
 export interface GscOpportunitiesResponse extends GscReportBase {
-  strikingDistance: GscStrikingDistanceOpportunity[];
-  lowCtr: GscLowCtrOpportunity[];
-  cannibalization: GscCannibalizationOpportunity[];
+  strikingDistance: GscOpportunityList<GscStrikingDistanceOpportunity>;
+  lowCtr: GscOpportunityList<GscLowCtrOpportunity>;
+  cannibalization: GscOpportunityList<GscCannibalizationOpportunity>;
   /** The thresholds that produced these lists, so the UI can explain itself. */
   thresholds: GscOpportunityThresholds;
 }

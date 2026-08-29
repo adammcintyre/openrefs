@@ -14,6 +14,7 @@ import { ApiException } from "../http";
 import { decryptSecret } from "../lib/crypto";
 import type { GscConfig } from "./config";
 import { refreshAccessToken, revokeToken } from "./api";
+import { projectPullCachePrefix } from "./reports";
 
 /**
  * Access-token cache lifetime, in seconds. Google issues tokens with
@@ -173,6 +174,57 @@ export async function clearConnectionCache(
   ]);
 }
 
+/**
+ * How much report cache one project deletion will walk.
+ *
+ * A bound, not a budget. Each cached pull is one (property, dimensions, from,
+ * to) combination with a 24-hour TTL, so a real project has tens of these and
+ * would never fill a single page — but a deletion runs inside a request, and an
+ * unbounded `list` loop over a store somebody has found a way to fill is not
+ * something to discover in production. Anything past the bound expires on its
+ * own within the day, which is the whole reason this is safe to cap.
+ */
+const PURGE_PAGE_SIZE = 1000;
+const PURGE_MAX_PAGES = 20;
+
+/**
+ * Everything this project's Search Console connection left in KV.
+ *
+ * Three key shapes, and the project's row cascading away in D1 reaches none of
+ * them: the cached access token (usable for up to 50 minutes after the project
+ * it belonged to stopped existing), the "broken" mark, and up to 24 hours of
+ * cached Search Console reports. Workspace deletion sweeps all three by prefix;
+ * deleting a single *project* has to name them.
+ *
+ * Returns the number of report-cache keys deleted. The token and broken marks
+ * are deleted unconditionally and not counted — KV cannot say whether a key it
+ * deleted existed, and paying for two reads to find out would be worse than
+ * not knowing.
+ */
+export async function purgeProjectGscKv(
+  kv: KVNamespace,
+  workspaceId: string,
+  projectId: string,
+): Promise<number> {
+  await clearConnectionCache(kv, workspaceId, projectId);
+
+  const prefix = projectPullCachePrefix(workspaceId, projectId);
+  let cursor: string | undefined;
+  let deleted = 0;
+
+  for (let page = 0; page < PURGE_MAX_PAGES; page++) {
+    const listed = await kv.list({ prefix, cursor, limit: PURGE_PAGE_SIZE });
+    // KV has no bulk delete, and the keys in a page are independent.
+    await Promise.all(listed.keys.map((key) => kv.delete(key.name)));
+    deleted += listed.keys.length;
+
+    if (listed.list_complete) break;
+    cursor = listed.cursor;
+  }
+
+  return deleted;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Access tokens                                                               */
 /* -------------------------------------------------------------------------- */
@@ -306,13 +358,60 @@ export async function revokeWorkspaceGoogleTokens(
 
   let revoked = 0;
   for (const connection of connections) {
-    try {
-      const token = await decryptSecret(masterKey, connection.refreshTokenEnc);
-      if (await revokeToken(token)) revoked += 1;
-    } catch {
-      // Undecryptable token: nothing to revoke, nothing to be done about it.
-    }
+    if (await revokeConnection(masterKey, connection)) revoked += 1;
   }
 
   return { attempted: connections.length, revoked };
+}
+
+/**
+ * Revokes the grant behind **one** project's connection. **Never throws.**
+ *
+ * The single-project twin of `revokeWorkspaceGoogleTokens`, and it exists for
+ * the same reason: `gsc_connections.project_id` cascades from `projects`, so
+ * deleting a project destroys the encrypted refresh token. Without this call
+ * first, the grant survives in the user's Google account with nothing left able
+ * to revoke it — the row that held the token is gone.
+ *
+ * `loadConnection` is the workspace-scoped read, so a project id belonging to
+ * another tenant finds nothing rather than revoking their grant. Every failure
+ * — the lookup, the decryption, Google itself — reports `attempted` without
+ * `revoked` rather than throwing: see `deleteProjectEverywhere`, where the
+ * user's deletion request must not be vetoed by a third party.
+ */
+export async function revokeProjectGoogleToken(
+  db: Db,
+  masterKey: string,
+  workspaceId: string,
+  projectId: string,
+): Promise<RevokeSummary> {
+  let connection: GscConnectionRow | null;
+  try {
+    connection = await loadConnection(db, workspaceId, projectId);
+  } catch {
+    // A project with no Search Console connection must not fail to delete
+    // because this query did.
+    return { attempted: 0, revoked: 0 };
+  }
+
+  if (connection === null) return { attempted: 0, revoked: 0 };
+
+  return {
+    attempted: 1,
+    revoked: (await revokeConnection(masterKey, connection)) ? 1 : 0,
+  };
+}
+
+/** Decrypt, revoke, and swallow. True only if Google accepted the revocation. */
+async function revokeConnection(
+  masterKey: string,
+  connection: GscConnectionRow,
+): Promise<boolean> {
+  try {
+    const token = await decryptSecret(masterKey, connection.refreshTokenEnc);
+    return await revokeToken(token);
+  } catch {
+    // Undecryptable token: nothing to revoke, nothing to be done about it.
+    return false;
+  }
 }

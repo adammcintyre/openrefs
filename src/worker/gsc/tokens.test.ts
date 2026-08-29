@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../../db";
 import { ApiException } from "../http";
 import { encryptSecret } from "../lib/crypto";
+import { projectPullCachePrefix } from "./reports";
 import type { GscConnectionRow } from "./tokens";
 import {
   GSC_TOKEN_TTL_SECONDS,
@@ -11,6 +12,8 @@ import {
   clearConnectionCache,
   getAccessToken,
   isConnectionBroken,
+  purgeProjectGscKv,
+  revokeProjectGoogleToken,
   revokeWorkspaceGoogleTokens,
   tokenCacheTtl,
 } from "./tokens";
@@ -27,6 +30,7 @@ const CONFIG = { clientId: "client-id", clientSecret: "client-secret" };
 class FakeKv {
   readonly store = new Map<string, string>();
   readonly ttls = new Map<string, number | undefined>();
+  listCalls = 0;
 
   async get(key: string): Promise<string | null> {
     return this.store.get(key) ?? null;
@@ -44,6 +48,30 @@ class FakeKv {
   async delete(key: string): Promise<void> {
     this.store.delete(key);
     this.ttls.delete(key);
+  }
+
+  /**
+   * KV's cursor is "continue **after** this key", not an offset — which is
+   * exactly what makes deleting keys as you walk them safe, because removing a
+   * key already returned cannot shift the pages still to come. Modelled
+   * faithfully so a purge that assumed offsets would visibly skip keys here
+   * rather than quietly "succeeding".
+   */
+  async list(options: { prefix?: string; cursor?: string; limit?: number }) {
+    this.listCalls += 1;
+    const { prefix = "", cursor, limit = 1000 } = options;
+
+    const matching = [...this.store.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .sort();
+    const remaining =
+      cursor === undefined ? matching : matching.filter((key) => key > cursor);
+    const items = remaining.slice(0, limit);
+    const keys = items.map((name) => ({ name }));
+
+    return remaining.length <= limit
+      ? { keys, list_complete: true as const }
+      : { keys, list_complete: false as const, cursor: items.at(-1) as string };
   }
 }
 
@@ -65,6 +93,28 @@ function fakeDb(rows: GscConnectionRow[] | Error): Db {
             if (rows instanceof Error) throw rows;
             return rows;
           },
+        }),
+      }),
+    }),
+  } as unknown as Db;
+}
+
+/**
+ * Enough of Drizzle's builder for `loadConnection`, which differs from the
+ * sweep's query by a trailing `.limit(1)`:
+ * `select().from().innerJoin().where().limit()`, awaited.
+ */
+function fakeProjectDb(rows: GscConnectionRow[] | Error): Db {
+  return {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: async () => {
+              if (rows instanceof Error) throw rows;
+              return rows;
+            },
+          }),
         }),
       }),
     }),
@@ -320,6 +370,166 @@ describe("clearConnectionCache", () => {
     await clearConnectionCache(binding, WS, PROJECT);
 
     expect(kv.store.size).toBe(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe("purgeProjectGscKv", () => {
+  /** A cached report pull, under the key shape `pullCacheKey` produces. */
+  function reportKey(projectId: string, suffix: string): string {
+    return `${projectPullCachePrefix(WS, projectId)}${suffix}`;
+  }
+
+  it("takes all three key shapes a connection leaves behind", async () => {
+    // None of these is reachable from D1: the project row cascades away and
+    // leaves a usable access token behind for up to 50 minutes, plus a day of
+    // a deleted project's Search Console data.
+    const { kv, binding } = kvOf();
+    await kv.put(accessTokenKey(WS, PROJECT), "ya29.still-valid");
+    await kv.put(brokenKey(WS, PROJECT), "1");
+    await kv.put(reportKey(PROJECT, "hash:query:2026-01-01:2026-01-28"), "[]");
+    await kv.put(reportKey(PROJECT, "hash:page:2026-01-01:2026-01-28"), "[]");
+
+    const deleted = await purgeProjectGscKv(binding, WS, PROJECT);
+
+    // Only the report cache is countable — see the function's own note.
+    expect(deleted).toBe(2);
+    expect(kv.store.size).toBe(0);
+  });
+
+  it("leaves every other project in the workspace alone", async () => {
+    const { kv, binding } = kvOf();
+    await kv.put(accessTokenKey(WS, PROJECT), "mine");
+    await kv.put(accessTokenKey(WS, "proj-2"), "theirs");
+    await kv.put(brokenKey(WS, "proj-2"), "1");
+    await kv.put(reportKey("proj-2", "hash:query:2026-01-01:2026-01-28"), "[]");
+
+    await purgeProjectGscKv(binding, WS, PROJECT);
+
+    expect([...kv.store.keys()].sort()).toEqual(
+      [
+        accessTokenKey(WS, "proj-2"),
+        brokenKey(WS, "proj-2"),
+        reportKey("proj-2", "hash:query:2026-01-01:2026-01-28"),
+      ].sort(),
+    );
+  });
+
+  it("does not let one project id prefix-match another", async () => {
+    // `proj-1` is a prefix of `proj-10`; the trailing colon in the key shape is
+    // the only thing keeping deleting one from emptying the other.
+    const { kv, binding } = kvOf();
+    await kv.put(reportKey("proj-1", "hash:query:a:b"), "[]");
+    await kv.put(reportKey("proj-10", "hash:query:a:b"), "[]");
+
+    const deleted = await purgeProjectGscKv(binding, WS, "proj-1");
+
+    expect(deleted).toBe(1);
+    expect([...kv.store.keys()]).toEqual([reportKey("proj-10", "hash:query:a:b")]);
+  });
+
+  it("follows the cursor rather than stopping at the first page", async () => {
+    const { kv, binding } = kvOf();
+    for (let i = 0; i < 2500; i++) {
+      // Zero-padded so lexicographic order matches numeric order, as KV lists.
+      await kv.put(reportKey(PROJECT, `hash:query:${String(i).padStart(5, "0")}`), "[]");
+    }
+
+    const deleted = await purgeProjectGscKv(binding, WS, PROJECT);
+
+    expect(deleted).toBe(2500);
+    expect(kv.store.size).toBe(0);
+    // 2500 keys at 1000 a page: three pages, so the cursor was honoured.
+    expect(kv.listCalls).toBe(3);
+  });
+
+  it("is harmless for a project that never connected", async () => {
+    const { kv, binding } = kvOf();
+    await expect(purgeProjectGscKv(binding, WS, PROJECT)).resolves.toBe(0);
+    expect(kv.store.size).toBe(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe("revokeProjectGoogleToken", () => {
+  async function connection(token: string): Promise<GscConnectionRow> {
+    return {
+      projectId: PROJECT,
+      refreshTokenEnc: await encryptSecret(MASTER_KEY, token),
+      property: "sc-domain:example.com",
+      connectedBy: "user-1",
+    };
+  }
+
+  it("posts the project's token to Google's revoke endpoint", async () => {
+    const db = fakeProjectDb([await connection("1//project-token")]);
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+
+    await expect(
+      revokeProjectGoogleToken(db, MASTER_KEY, WS, PROJECT),
+    ).resolves.toEqual({ attempted: 1, revoked: 1 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://oauth2.googleapis.com/revoke");
+    expect(new URLSearchParams(init.body as string).get("token")).toBe(
+      "1//project-token",
+    );
+  });
+
+  it("makes no network call for a project with no connection", async () => {
+    await expect(
+      revokeProjectGoogleToken(fakeProjectDb([]), MASTER_KEY, WS, PROJECT),
+    ).resolves.toEqual({ attempted: 0, revoked: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("counts an already-revoked token as attempted but not revoked", async () => {
+    const db = fakeProjectDb([await connection("1//dead")]);
+    fetchMock.mockResolvedValue(new Response(null, { status: 400 }));
+
+    await expect(
+      revokeProjectGoogleToken(db, MASTER_KEY, WS, PROJECT),
+    ).resolves.toEqual({ attempted: 1, revoked: 0 });
+  });
+
+  it("never throws when Google is unreachable", async () => {
+    const db = fakeProjectDb([await connection("1//token")]);
+    fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(
+      revokeProjectGoogleToken(db, MASTER_KEY, WS, PROJECT),
+    ).resolves.toEqual({ attempted: 1, revoked: 0 });
+  });
+
+  it("reports an undecryptable token as attempted, and sends nothing", async () => {
+    const db = fakeProjectDb([
+      {
+        projectId: PROJECT,
+        refreshTokenEnc: await encryptSecret("c".repeat(64), "1//other-key"),
+        property: "",
+        connectedBy: null,
+      },
+    ]);
+
+    await expect(
+      revokeProjectGoogleToken(db, MASTER_KEY, WS, PROJECT),
+    ).resolves.toEqual({ attempted: 1, revoked: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("survives the lookup itself failing", async () => {
+    // Deleting a project must not fail because this query blew up.
+    await expect(
+      revokeProjectGoogleToken(
+        fakeProjectDb(new Error("no such table")),
+        MASTER_KEY,
+        WS,
+        PROJECT,
+      ),
+    ).resolves.toEqual({ attempted: 0, revoked: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
