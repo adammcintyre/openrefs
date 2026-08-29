@@ -59,36 +59,54 @@ export const OPPORTUNITY_LIMIT = 200;
 /* -------------------------------------------------------------------------- */
 
 /**
- * Expected organic CTR by position, index 0 = position 1.
+ * Expected organic CTR by position, index 0 = position 1, as fractions.
  *
- * **Source: Advanced Web Ranking's CTR study** — aggregated Search Console
- * data across a large panel of properties, published as a free monthly
- * dataset: https://www.advancedwebranking.com/ctrstudy/
- * The values below are the desktop+mobile blended, all-industries, worldwide
- * figures rounded to two decimals.
+ * **Source: Backlinko, "We Analyzed 4 Million Google Search Results"** —
+ * https://backlinko.com/google-ctr-stats — 1,312,881 pages across 12,166,560
+ * queries. Chosen over the alternatives for one reason that matters here: it
+ * is **aggregated Google Search Console data** ("we were able to get CTR data
+ * from several different Google Search Console accounts"), so it measures the
+ * same quantity, with the same denominator, as the `ctr` field these rules
+ * compare it against. The dataset is from ~2022.
  *
- * **Why a hardcoded curve at all.** The honest answer is that "expected CTR"
- * is site-specific: a brand query at position 3 outperforms a generic one at
- * position 1, and a SERP with an AI overview or four ads above the fold
- * depresses every position. A per-property curve fitted from the user's own
- * data would be better and is the obvious future improvement. Until then a
- * published industry curve is the defensible default — and the rule only fires
- * at **half** the expected value precisely so ordinary variation does not.
+ * Corroborated by Sistrix's 80-million-keyword GSC study
+ * (https://www.sistrix.com/blog/why-almost-everything-you-knew-about-google-ctr-is-no-longer-valid/),
+ * which agrees within about one percentage point at every position:
+ * 28.5 / 15.7 / 11.0 / 8.0 / 7.2 / 5.1 / 4.0 / 3.2 / 2.8 / 2.5.
  *
- * **Read it as an order of magnitude, not a target.** Position 1 earning 20%
- * rather than 40% is not automatically a problem. It is a prompt to look.
+ * Deliberately **not** clickstream data (seoClarity's study puts position 1 at
+ * 8%, not 28%) — that counts zero-click sessions in its denominator and is not
+ * the same measurement as Search Console's CTR, so mixing it in would compare
+ * two different things.
+ *
+ * **Three caveats, all of which the ×0.5 threshold is there to absorb:**
+ *
+ *  1. The data predates AI Overviews. Every directional signal since points to
+ *     lower top-of-page CTR, so this curve is, if anything, generous at
+ *     positions 1–3 — which makes the rule *less* likely to fire, i.e. it errs
+ *     toward silence rather than toward false alarms.
+ *  2. Positions 8–10 are within noise of each other in every published study
+ *     (Backlinko itself calls them "virtually the same"). Treat the tail as a
+ *     floor, not a gradient.
+ *  3. "Expected CTR" is genuinely site-specific: a brand query at position 3
+ *     out-clicks a generic one at position 1. Fitting a per-property curve
+ *     from the user's own data would be strictly better and is the obvious
+ *     future improvement.
+ *
+ * Read the output as a prompt to look, never as a target. Position 1 earning
+ * 15% rather than 27% is not automatically a problem.
  */
 export const EXPECTED_CTR_BY_POSITION: readonly number[] = [
-  0.398, // 1
-  0.187, // 2
-  0.104, // 3
-  0.067, // 4
-  0.047, // 5
-  0.035, // 6
-  0.028, // 7
-  0.022, // 8
-  0.019, // 9
-  0.016, // 10
+  0.276, // 1
+  0.158, // 2
+  0.11, // 3
+  0.084, // 4
+  0.063, // 5
+  0.049, // 6
+  0.039, // 7
+  0.033, // 8
+  0.027, // 9
+  0.024, // 10
 ];
 
 /**

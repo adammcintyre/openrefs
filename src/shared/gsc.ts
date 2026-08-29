@@ -22,17 +22,26 @@ import { z } from "zod";
 /* -------------------------------------------------------------------------- */
 
 /**
- * How far behind "today" Search Console's finalised data runs, in days.
+ * How far behind "today" this module assumes Search Console's finalised data
+ * runs, in days.
  *
- * Google documents Search Console performance data as available "within a
- * couple of days" and the Performance report itself shows the most recent
- * complete day two days back. Asking for yesterday returns either nothing or a
- * partial day that will change under you — which would make a 28-day window
- * silently include one bad point and make day-over-day comparisons lie.
+ * **Google does not publish a fixed figure**, and it would be wrong to imply
+ * they do. What they document is a *mechanism*: `searchanalytics.query` takes
+ * a `dataState` parameter which defaults to `final`, and only `all` returns
+ * the still-moving recent rows — flagged by a `first_incomplete_date` in the
+ * response metadata. Their 2024 Search Central post says the delay has roughly
+ * halved and now runs to hours for the 24-hour view.
  *
- * So every request is clamped to end at `today - GSC_DATA_LAG_DAYS`, and every
- * response says so in `freshTo`. The UI renders that as a "data to <date>"
- * chip in the slot other modules use for cost.
+ * OpenRefs asks for finalised data only, so the risk is not bad numbers but
+ * *missing* ones: a window ending today would silently be short a day or two
+ * and quietly understate the period. Clamping every request to end at
+ * `today - GSC_DATA_LAG_DAYS` makes the window mean what it says, and two days
+ * is the conservative choice docs/specs/PHASE5.md settled on.
+ *
+ * Every response reports the clamp in `freshTo`, which the UI renders as a
+ * "data to <date>" chip in the slot other modules use for cost. If a later
+ * phase wants genuinely fresh numbers, the honest way is `dataState: "all"`
+ * plus honouring `first_incomplete_date` — not shrinking this constant.
  */
 export const GSC_DATA_LAG_DAYS = 2;
 
@@ -40,10 +49,12 @@ export const GSC_DATA_LAG_DAYS = 2;
 export const GSC_DEFAULT_RANGE_DAYS = 28;
 
 /**
- * Rows pulled per Search Console query. Google caps `rowLimit` at 25,000; we
- * ask for 5,000 (docs/specs/PHASE5.md), which is far more than any table
- * renders and enough for the opportunity rules to compute a meaningful median.
- * Fetching the maximum would only make the KV cache entry five times larger.
+ * Rows pulled per Search Console query.
+ *
+ * Google documents `rowLimit` as "Valid range is 1–25,000; Default is 1,000";
+ * we ask for 5,000 (docs/specs/PHASE5.md). That is far more than any table
+ * renders and plenty for the opportunity rules to compute a meaningful median,
+ * while keeping the KV cache entry a fifth of the size the maximum would need.
  */
 export const GSC_ROW_LIMIT = 5000;
 
