@@ -433,13 +433,53 @@ export function createDataForSeoClient(
    * One HTTP round trip. Everything above this line is policy; everything
    * inside it is the only place in OpenRefs that talks to DataForSEO.
    */
+  /*
+   * Egress relay (optional). DataForSEO throttles by source IP, and Cloudflare
+   * Workers egress IPs are shared across many tenants — during someone else's
+   * abuse window, every request from the Worker hangs while the same call is
+   * instant from any other network (measured 2026-08-29). When DFS_PROXY_URL +
+   * DFS_PROXY_TOKEN are configured, requests go to a tiny authenticated
+   * forwarder on operator-controlled infrastructure with a clean IP instead of
+   * directly to DataForSEO. The forwarder only accepts our token, only talks
+   * to api.dataforseo.com/v3, and never stores credentials. Self-host default:
+   * unset (direct). The relay carries the SAME Basic credentials in a header,
+   * so trust in the relay host equals trust in the operator.
+   */
+  const proxyUrl = "DFS_PROXY_URL" in env ? (env as { DFS_PROXY_URL?: string }).DFS_PROXY_URL : undefined;
+  const proxyToken = "DFS_PROXY_TOKEN" in env ? (env as { DFS_PROXY_TOKEN?: string }).DFS_PROXY_TOKEN : undefined;
+  // Only relay traffic destined for the real API — sandbox/tests stay direct.
+  const useProxy =
+    typeof proxyUrl === "string" && proxyUrl !== "" &&
+    typeof proxyToken === "string" && proxyToken !== "" &&
+    baseUrl === DFS_BASE_URL;
+  const basicCredentials = bytesToBase64(
+    new TextEncoder().encode(`${credentials.login}:${credentials.password}`),
+  );
+
   async function call<TResult>(
     endpoint: string,
     method: "GET" | "POST",
     payload?: unknown,
     timeouts: readonly number[] = ATTEMPT_TIMEOUTS_MS,
   ): Promise<DfsEnvelope<TResult>> {
-    const url = new URL(endpoint, baseUrl).toString();
+    const url = useProxy
+      ? (proxyUrl as string)
+      : new URL(endpoint, baseUrl).toString();
+    const requestHeaders: Record<string, string> = useProxy
+      ? {
+          "X-Relay-Token": proxyToken as string,
+          "X-Dfs-Auth": basicCredentials,
+          "X-Dfs-Path": `v3/${endpoint}`,
+          "X-Dfs-Method": method,
+          "Content-Type": "application/json",
+        }
+      : {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        };
+    // The relay is always POSTed to (the upstream method rides in a header),
+    // which also keeps intermediary caches out of the path.
+    const wireMethod = useProxy ? "POST" : method;
 
     /*
      * Retrying is safe ONLY for attempts that produced no HTTP response: once
@@ -454,11 +494,8 @@ export function createDataForSeoClient(
       if (attemptTimeout === undefined) break;
       try {
         res = await fetch(url, {
-          method,
-          headers: {
-            Authorization: authHeader,
-            "Content-Type": "application/json",
-          },
+          method: wireMethod,
+          headers: requestHeaders,
           body: method === "POST" ? JSON.stringify(payload) : undefined,
           signal: AbortSignal.timeout(attemptTimeout),
         });

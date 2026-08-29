@@ -49,3 +49,13 @@ DATAFORSEO_PASSWORD="replace-me"
 # in production set it with `wrangler secret put GOOGLE_CLIENT_SECRET`.
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
+
+# ---------------------------------------------------------------------------
+# DataForSEO egress relay — OPTIONAL, for deployments whose outbound IPs are
+# throttled by DataForSEO (observed with Cloudflare Workers' shared egress).
+# Point at a copy of the tiny authenticated forwarder (see docs/BACKLOG.md
+# history) hosted on any box with a clean IP; leave unset to call the API
+# directly (the default, and correct for local dev).
+# In production set both with `wrangler secret put`.
+DFS_PROXY_URL=""
+DFS_PROXY_TOKEN=""
