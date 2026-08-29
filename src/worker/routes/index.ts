@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { AppEnv } from "../types";
+import ai from "./ai";
 import audits from "./audits";
 import auth from "./auth";
 import backlinks from "./backlinks";
@@ -24,6 +25,14 @@ export interface RouteModule {
   /** Mount path relative to API_PREFIX, e.g. "/auth". */
   path: string;
   router: Hono<AppEnv>;
+  /**
+   * Registry key, when `path` is not a unique one.
+   *
+   * Two modules may legitimately share a mount point — AI Visibility hangs off
+   * `/projects` beside the projects module — and the mount test keys its probe
+   * table by module. Defaults to `path`.
+   */
+  label?: string;
 }
 
 /**
@@ -42,6 +51,12 @@ export const routeModules: RouteModule[] = [
   { path: "/gap", router: gap },
   { path: "/collections", router: collections },
   { path: "/projects", router: projects },
+  /*
+   * AI Visibility mounts on the same prefix rather than as a sub-router of
+   * routes/projects.ts: its paths all begin `/:id/ai/`, Hono matches both
+   * routers under `/projects`, and the module stays one file with one owner.
+   */
+  { path: "/projects", label: "/projects/ai", router: ai },
   // Audits are reached two ways: `/projects/:id/audits` (list + create), which
   // the projects router mounts as a sub-router, and `/audits/:auditId` for one
   // audit, mounted here. Both live in routes/audits.ts.

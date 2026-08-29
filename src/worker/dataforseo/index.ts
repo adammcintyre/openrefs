@@ -7,6 +7,8 @@
  * way to build a wrapper without a workspace, which is the point.
  */
 import type { Db } from "../../db";
+import type { AiOptimizationApi } from "./ai";
+import { createAiOptimizationApi } from "./ai";
 import type { BacklinksApi } from "./backlinks";
 import { createBacklinksApi } from "./backlinks";
 import type { CreateClientOptions, DataForSeoClient } from "./client";
@@ -23,6 +25,7 @@ import { createOnPageApi } from "./on-page";
 import type { SerpApi } from "./serp";
 import { createSerpApi } from "./serp";
 
+export * from "./ai";
 export * from "./backlinks";
 export * from "./client";
 export * from "./credentials";
@@ -45,6 +48,11 @@ export interface DataForSeoApi {
   serp: SerpApi;
   /** The crawler. Only `task_post` is billed; every retrieval is free. */
   onPage: OnPageApi;
+  /**
+   * The LLM-responses family behind AI Visibility. Never cached, and the only
+   * family whose price is set by a third party rather than by DataForSEO.
+   */
+  ai: AiOptimizationApi;
   /** The zero-cost reference lists. The only globally-cached family. */
   meta: MetaApi;
 }
@@ -60,6 +68,7 @@ export function createDataForSeoApiFromClient(
     backlinks: createBacklinksApi(client),
     serp: createSerpApi(client),
     onPage: createOnPageApi(client),
+    ai: createAiOptimizationApi(client),
     meta: createMetaApi(client),
   };
 }

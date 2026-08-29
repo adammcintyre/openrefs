@@ -9,6 +9,7 @@ import type { Db } from "../db";
 import { getDb, jobs } from "../db";
 import {
   ensureDailySeedJob,
+  ensureWeeklyAiSeedJob,
   findJobHandler,
   isExhausted,
   JOB_LEASE_MS,
@@ -73,8 +74,10 @@ export async function sweepJobs(env: Env): Promise<SweepResult> {
 
   // Self-healing: a deployment that has never run, or whose seed job exhausted
   // its attempts, gets a new one here rather than silently never checking
-  // ranks again.
+  // ranks again. Both recurring seeds are repaired the same way — rank
+  // tracking nightly, AI Visibility weekly.
   await ensureDailySeedJob({ db, now });
+  await ensureWeeklyAiSeedJob({ db, now });
 
   const claimed = await claimDueJobs(db, now);
 

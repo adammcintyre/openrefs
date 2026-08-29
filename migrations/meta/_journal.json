@@ -15,6 +15,13 @@
       "when": 1787997976582,
       "tag": "0001_mixed_wrecking_crew",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788006130529,
+      "tag": "0002_worthless_ultron",
+      "breakpoints": true
     }
   ]
 }

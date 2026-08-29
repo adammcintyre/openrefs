@@ -69,6 +69,20 @@ export const DFS_RESULTS_EXPIRED_STATUS = 40403;
 export const ATTEMPT_TIMEOUTS_MS = [20_000, 60_000] as const;
 
 /**
+ * The ladder for an endpoint that is *expected* to take minutes and is billed
+ * whether or not we are still listening: **one attempt, no retry**.
+ *
+ * DataForSEO's AI Optimization live endpoints are documented at "up to 120
+ * seconds" — a language model is thinking and, with `web_search` on, fetching
+ * pages first. Under the default ladder the first attempt would abort at 20s
+ * and the second would re-ask; but unlike a hung `search_volume`, that first
+ * request is *working*, and re-asking buys a second answer at full price. So
+ * this ladder waits past their ceiling and gives up rather than retrying: a
+ * missing answer is one empty cell in a chart, a duplicate one is real money.
+ */
+export const PATIENT_ATTEMPT_TIMEOUTS_MS = [130_000] as const;
+
+/**
  * Cache lifetimes from docs/ARCHITECTURE.md, in seconds, passed to KV as
  * `expirationTtl`. Keys are `ws:<workspaceId>:dfs:<endpoint-hash>` — the
  * workspace prefix is what keeps one tenant's paid results out of another's,
@@ -177,6 +191,14 @@ export interface DataForSeoRequest<TPayload = unknown> {
    * billing shows up in the usage report rather than hiding here.
    */
   spendCapExempt?: boolean;
+  /**
+   * Per-attempt timeouts for this endpoint, overriding `ATTEMPT_TIMEOUTS_MS`.
+   *
+   * The array's length is the attempt count, so a single-element ladder is
+   * also how a caller says "do not retry this" — which is the right answer for
+   * anything slow and billed. See `PATIENT_ATTEMPT_TIMEOUTS_MS`.
+   */
+  timeoutsMs?: readonly number[];
   /**
    * The spend for this call was already metered when its task was POSTED —
    * any `cost` echoed on this response is informational, so it is recorded as
@@ -415,6 +437,7 @@ export function createDataForSeoClient(
     endpoint: string,
     method: "GET" | "POST",
     payload?: unknown,
+    timeouts: readonly number[] = ATTEMPT_TIMEOUTS_MS,
   ): Promise<DfsEnvelope<TResult>> {
     const url = new URL(endpoint, baseUrl).toString();
 
@@ -427,7 +450,7 @@ export function createDataForSeoClient(
      */
     let res: Response | null = null;
     for (let attempt = 0; res === null; attempt++) {
-      const attemptTimeout = ATTEMPT_TIMEOUTS_MS[attempt];
+      const attemptTimeout = timeouts[attempt];
       if (attemptTimeout === undefined) break;
       try {
         res = await fetch(url, {
@@ -440,14 +463,13 @@ export function createDataForSeoClient(
           signal: AbortSignal.timeout(attemptTimeout),
         });
       } catch (err) {
-        if (attempt < ATTEMPT_TIMEOUTS_MS.length - 1) continue;
+        if (attempt < timeouts.length - 1) continue;
         const name = err instanceof Error ? err.name : "";
         if (name === "TimeoutError" || name === "AbortError") {
-          const totalSeconds =
-            ATTEMPT_TIMEOUTS_MS.reduce((sum, ms) => sum + ms, 0) / 1000;
+          const totalSeconds = timeouts.reduce((sum, ms) => sum + ms, 0) / 1000;
           throw new ApiException(
             "upstream_timeout",
-            `DataForSEO didn't respond in time (${totalSeconds}s, ${ATTEMPT_TIMEOUTS_MS.length} attempts). Their API occasionally slows for a few minutes for requests from cloud providers — it usually clears quickly, so try again shortly. Nothing was charged for this request.`,
+            `DataForSEO didn't respond in time (${totalSeconds}s, ${timeouts.length} attempts). Their API occasionally slows for a few minutes for requests from cloud providers — it usually clears quickly, so try again shortly. Nothing was charged for this request.`,
             { endpoint },
           );
         }
@@ -585,6 +607,7 @@ export function createDataForSeoClient(
         okTaskStatusCodes = [],
         spendCapExempt = false,
         resultsPrepaid = false,
+        timeoutsMs = ATTEMPT_TIMEOUTS_MS,
         meterAs,
       } = req;
       // The cache key still uses the real path — two task ids are two
@@ -633,6 +656,7 @@ export function createDataForSeoClient(
         endpoint,
         method,
         method === "POST" ? payload : undefined,
+        timeoutsMs,
       );
 
       // 5. Meter the real cost *before* interpreting the status: a task that

@@ -10,7 +10,8 @@ const app = createApp();
 /**
  * A path per module that must resolve to *something*. Modules whose root is
  * not a route (auth) need an explicit probe, and a new module with no entry
- * here fails the mount test rather than silently skipping it.
+ * here fails the mount test rather than silently skipping it. Keyed by
+ * `label ?? path`, so two modules sharing a mount point are probed separately.
  *
  * These requests carry no cookie and no bearer key, so `loadSession` takes its
  * anonymous fast path and never touches D1 — which is why they run under plain
@@ -27,6 +28,7 @@ const MOUNT_PROBES: Record<string, string> = {
   "/gap": "/gap/keywords",
   "/collections": "/collections",
   "/projects": "/projects",
+  "/projects/ai": "/projects/abc/ai/prompts",
   "/audits": "/audits/abc",
   "/dashboard": "/dashboard",
   "/gsc": "/gsc/status",
@@ -40,12 +42,13 @@ describe("route registry", () => {
     // itself. No binding is touched — every module answers this bare request
     // from validation or a stub, before it reaches D1.
     const env = { APP_ENV: "development" } as Env;
-    for (const { path } of routeModules) {
-      const probe = MOUNT_PROBES[path];
-      expect(probe, `add a MOUNT_PROBES entry for ${path}`).toBeDefined();
+    for (const { path, label } of routeModules) {
+      const key = label ?? path;
+      const probe = MOUNT_PROBES[key];
+      expect(probe, `add a MOUNT_PROBES entry for ${key}`).toBeDefined();
 
       const res = await app.request(`${API_PREFIX}${probe as string}`, undefined, env);
-      expect(res.status, `${path} should be mounted`).not.toBe(404);
+      expect(res.status, `${key} should be mounted`).not.toBe(404);
     }
   });
 
@@ -158,6 +161,15 @@ describe("session guard", () => {
     ["GET", "/gsc/queries"],
     ["GET", "/gsc/pages"],
     ["GET", "/gsc/opportunities"],
+    // Phase 6. AI Visibility reads tenant data, and the mutations either spend
+    // money now (run) or commit the workspace to spending it every week
+    // (creating a prompt). Same rule: the 401 lands before validation.
+    ["GET", "/projects/abc/ai/prompts"],
+    ["POST", "/projects/abc/ai/prompts"],
+    ["PATCH", "/projects/abc/ai/prompts/p1"],
+    ["DELETE", "/projects/abc/ai/prompts/p1"],
+    ["GET", "/projects/abc/ai/results"],
+    ["POST", "/projects/abc/ai/run"],
     // Free and non-tenant, but still not public.
     ["GET", "/meta/locations"],
     ["GET", "/meta/languages"],
