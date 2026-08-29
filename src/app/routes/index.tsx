@@ -5,7 +5,9 @@ import { ComingSoon } from "../components/coming-soon";
 import { WorkspaceSwitcher } from "../components/workspace-switcher";
 import { useMe } from "../lib/session";
 import { AppLayout } from "./app-layout";
+import { BacklinksModule } from "./backlinks/module";
 import { DomainOverviewModule } from "./domain-overview/module";
+import { GapAnalysisModule } from "./gap-analysis/module";
 import { InviteAccept } from "./invite";
 import { KeywordResearchModule } from "./keyword-research/module";
 import { Landing } from "./landing";
@@ -30,6 +32,8 @@ const MODULE_SEGMENTS = new Set([
   SETTINGS_SEGMENT,
   "keyword-research",
   "domain-overview",
+  "backlinks",
+  "gap-analysis",
 ]);
 
 function FullPageMessage({ children }: { children: string }) {
@@ -104,6 +108,8 @@ export function AppRoutes() {
 
           <Route path="keyword-research/*" element={<KeywordResearchModule />} />
           <Route path="domain-overview/*" element={<DomainOverviewModule />} />
+          <Route path="backlinks/*" element={<BacklinksModule />} />
+          <Route path="gap-analysis/*" element={<GapAnalysisModule />} />
 
           <Route path={SETTINGS_SEGMENT} element={<SettingsLayout />}>
             <Route index element={<GeneralSettings />} />
