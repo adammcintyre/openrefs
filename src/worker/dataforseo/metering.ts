@@ -14,6 +14,11 @@ import { and, eq, gte, sql } from "drizzle-orm";
 
 import type { Db } from "../../db";
 import { apiUsage } from "../../db";
+import type { EndpointUsage, MonthlyUsage } from "../../shared/api";
+
+// Re-exported so callers can stay on one import; the shapes themselves are
+// part of the worker<->SPA contract and live in src/shared/api.ts.
+export type { EndpointUsage, MonthlyUsage };
 
 /**
  * Start of the UTC calendar month containing `now`. The cap resets at this
@@ -62,20 +67,6 @@ export async function sumMonthCostUsd(
       ),
     );
   return Number(rows[0]?.total ?? 0);
-}
-
-export interface EndpointUsage {
-  endpoint: string;
-  requests: number;
-  costUsd: number;
-}
-
-export interface MonthlyUsage {
-  totalUsd: number;
-  requestCount: number;
-  /** Share of this month's requests served from KV, 0–1. 0 when there are none. */
-  cacheHitRate: number;
-  byEndpoint: EndpointUsage[];
 }
 
 /**

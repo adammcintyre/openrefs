@@ -45,6 +45,37 @@ export interface HealthResponse {
   version: string;
 }
 
+/** One DataForSEO endpoint's slice of a month's spend. */
+export interface EndpointUsage {
+  /** DataForSEO path, e.g. "keywords_data/google_ads/search_volume/live". */
+  endpoint: string;
+  requests: number;
+  costUsd: number;
+}
+
+/** A workspace's DataForSEO spend over one UTC calendar month. */
+export interface MonthlyUsage {
+  totalUsd: number;
+  requestCount: number;
+  /** Share of requests served from cache, 0–1. Zero when there were none. */
+  cacheHitRate: number;
+  byEndpoint: EndpointUsage[];
+}
+
+/** GET /api/v1/usage?workspace=<id> */
+export interface UsageResponse extends MonthlyUsage {
+  /** ISO timestamp of the start of the reported month, in UTC. */
+  periodStart: string;
+}
+
+/** GET /api/v1/usage/balance?workspace=<id> */
+export interface BalanceResponse {
+  /** Money left in the workspace's DataForSEO account. */
+  balanceUsd: number;
+  /** True when served from the 60-second micro-cache rather than the API. */
+  cached: boolean;
+}
+
 /** Narrow an unknown JSON body to the error shape. */
 export function isApiErrorBody(value: unknown): value is ApiErrorBody {
   if (typeof value !== "object" || value === null || !("error" in value)) {

@@ -9,8 +9,12 @@ const app = createApp();
 
 describe("route registry", () => {
   it("mounts every module under the versioned prefix", async () => {
+    // A development env so /dev is visible; see dev.test.ts for the gate
+    // itself. No binding is touched — every module answers this bare request
+    // from validation or a stub, before it reaches D1.
+    const env = { APP_ENV: "development" } as Env;
     for (const { path } of routeModules) {
-      const res = await app.request(`${API_PREFIX}${path}`);
+      const res = await app.request(`${API_PREFIX}${path}`, undefined, env);
       expect(res.status, `${path} should be mounted`).not.toBe(404);
     }
   });
@@ -44,7 +48,8 @@ describe("GET /api/v1/health", () => {
 });
 
 describe("unimplemented module stubs", () => {
-  const stubs = ["/auth", "/workspaces", "/usage"];
+  // /usage is implemented; see usage.test.ts.
+  const stubs = ["/auth", "/workspaces"];
 
   it.each(stubs)("%s responds 501 with code not_implemented", async (path) => {
     const res = await app.request(`${API_PREFIX}${path}`);
