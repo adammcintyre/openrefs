@@ -159,8 +159,13 @@ keywords.get("/overview", async (c) => {
   const difficultyRow = difficulty?.items[0];
   const intentRow = intent?.items[0];
 
-  // Newest months last, capped to what the chart shows.
-  const monthly = row?.monthlySearches ?? [];
+  // DataForSEO returns monthly volumes NEWEST-first despite its docs (observed
+  // live, 2026-08). Sort ascending before slicing so "the last N months" takes
+  // the most recent ones and the shared type's oldest-first contract holds
+  // regardless of upstream order.
+  const monthly = [...(row?.monthlySearches ?? [])].sort(
+    (a, b) => a.year - b.year || a.month - b.month,
+  );
   const recent = monthly.slice(-HISTORY_MONTHS);
 
   const body: KeywordOverviewResponse = {
