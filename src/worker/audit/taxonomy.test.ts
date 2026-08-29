@@ -256,7 +256,9 @@ describe("the mapping table", () => {
     no_social_media_tags: ["social_tags", true],
     // localization
     no_encoding_meta_tag: ["localization", true],
-    meta_charset_consistency: ["localization", false],
+    // Informational, not `false`: see the comment on this entry in taxonomy.ts
+    // — the live crawl contradicted the natural reading of its polarity.
+    meta_charset_consistency: ["localization", null],
     // links
     broken_links: ["links", true],
     broken_resources: ["links", true],

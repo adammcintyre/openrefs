@@ -199,9 +199,16 @@ export function classifyCrawl(
       category,
       label: definition.label,
       description: definition.description,
-      // The declared baseline only applies when nothing fired; otherwise the
-      // category reports what was actually found.
-      severity: observedSeverity.get(category) ?? definition.baseSeverity,
+      /*
+       * The worst severity actually observed — or `notice` when the category
+       * is empty.
+       *
+       * Not the category's baseline: `links` has a baseline of `error`, so
+       * falling back to it rendered a clean site's link row as "error, 0
+       * pages" — an empty category painted red. Severity describes findings,
+       * and with no findings there is nothing to be alarmed about.
+       */
+      severity: observedSeverity.get(category) ?? "notice",
       affectedPages: issuePages.get(category)?.length ?? 0,
       checks,
     };

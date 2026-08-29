@@ -84,17 +84,17 @@ describe("classifyCrawl", () => {
   });
 
   it("honours reversed polarity — a positive check fails when false", () => {
-    // `meta_charset_consistency` is good when true. Treating every check as
-    // "true is bad" would report every correctly-encoded page as an issue.
-    const consistent = classifyCrawl([
-      page("https://x.test/a", { meta_charset_consistency: true }),
+    // `seo_friendly_url` is good when true. Treating every check as "true is
+    // bad" would report every tidy URL on the site as an issue.
+    const friendly = classifyCrawl([
+      page("https://x.test/a", { seo_friendly_url: true }),
     ]);
-    expect(consistent.totalIssues).toBe(0);
+    expect(friendly.totalIssues).toBe(0);
 
-    const inconsistent = classifyCrawl([
-      page("https://x.test/a", { meta_charset_consistency: false }),
+    const unfriendly = classifyCrawl([
+      page("https://x.test/a", { seo_friendly_url: false }),
     ]);
-    expect(inconsistent.totalIssues).toBe(1);
+    expect(unfriendly.totalIssues).toBe(1);
   });
 
   it("never counts an informational check, either way round", () => {
@@ -124,6 +124,18 @@ describe("classifyCrawl", () => {
     );
     expect(indexability?.affectedPages).toBe(1);
     expect(indexability?.severity).not.toBe("error");
+  });
+
+  it("never paints an empty category as an error", () => {
+    // `links` has a baseline of `error`. Before this, a clean crawl rendered
+    // its link row as "error — 0 pages": an empty category in alarm red.
+    // Severity describes findings; with no findings there is nothing to alarm
+    // about.
+    const clean = classifyCrawl([page("https://x.test/a", {})]);
+    for (const category of clean.categories) {
+      expect(category.affectedPages, category.category).toBe(0);
+      expect(category.severity, category.category).toBe("notice");
+    }
   });
 
   it("escalates a category to its worst finding", () => {

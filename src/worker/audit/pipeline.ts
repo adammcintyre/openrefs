@@ -25,8 +25,10 @@
  */
 import type {
   AuditCategory,
-  AuditSummary,
+  AuditCategoryResult,
+  AuditIssuePage,
   AuditLighthouse,
+  AuditSummary,
 } from "../../shared/audits";
 import type { DataForSeoApi } from "../dataforseo";
 import type { OnPagePageItem, OnPageSummary } from "../dataforseo/on-page";
@@ -36,6 +38,7 @@ import {
 } from "../dataforseo/on-page";
 import type { CrawledPage } from "./ingest";
 import { classifyCrawl } from "./ingest";
+import { CATEGORY_DEFINITIONS } from "./taxonomy";
 import type { AuditSection } from "./storage";
 import { auditIssuesKey, auditSectionKey, putAuditJson } from "./storage";
 
@@ -303,6 +306,92 @@ export function siteLevelPage(options: {
     },
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Late Lighthouse attach                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Recomputes just the Core Web Vitals row of an already-published audit.
+ *
+ * Used when Lighthouse arrives after the crawl was ingested — the common case,
+ * since a small crawl finishes in under a minute and their Lighthouse queue is
+ * quoted at up to 45. Only this one category can change: nothing else in the
+ * rollup was derived from Lighthouse, so re-pulling the crawl to recompute the
+ * other sixteen would spend a subrequest budget to arrive at the same answers.
+ *
+ * It runs the real `classifyCrawl` over a one-page crawl rather than
+ * hand-rolling the counts, so the thresholds, severity and labels come from the
+ * same tested path as a first-pass ingest and cannot drift from it.
+ */
+export function withCoreWebVitals(
+  categories: readonly AuditCategoryResult[],
+  lighthouse: AuditLighthouse,
+  domain: string,
+): AuditCategoryResult[] {
+  const recomputed = coreWebVitalsResult(lighthouse, domain);
+  return categories.map((category) =>
+    category.category === "core_web_vitals" ? recomputed.category : category,
+  );
+}
+
+/** The Core Web Vitals category and its affected page, from Lighthouse alone. */
+export function coreWebVitalsResult(
+  lighthouse: AuditLighthouse,
+  domain: string,
+): { category: AuditCategoryResult; pages: AuditIssuePage[] } {
+  const page = siteLevelPage({
+    domain,
+    // An empty crawl summary: this pass is only about the `cwv_*` checks, and
+    // the site-level checks were already classified at ingest. Including them
+    // again would double-count robots.txt and friends.
+    crawlSummary: EMPTY_CRAWL_CHECKS,
+    lighthouse,
+  });
+
+  const classified = classifyCrawl([page]);
+  const category = classified.categories.find(
+    (entry) => entry.category === "core_web_vitals",
+  );
+
+  return {
+    // `classifyCrawl` always returns every category, so this is total; the
+    // fallback exists only to satisfy the type.
+    category: category ?? {
+      category: "core_web_vitals",
+      label: CATEGORY_DEFINITIONS.core_web_vitals.label,
+      description: CATEGORY_DEFINITIONS.core_web_vitals.description,
+      severity: CATEGORY_DEFINITIONS.core_web_vitals.baseSeverity,
+      affectedPages: 0,
+      checks: [],
+    },
+    pages: classified.issuePages.get("core_web_vitals") ?? [],
+  };
+}
+
+/**
+ * A crawl summary carrying no checks, for the Lighthouse-only pass above.
+ * Every count is zero because nothing here is read for anything but its
+ * (empty) `domainChecks`.
+ */
+const EMPTY_CRAWL_CHECKS: OnPageSummary = {
+  finished: true,
+  crawlProgress: "finished",
+  crawlStopReason: null,
+  pagesCrawled: 0,
+  pagesInQueue: 0,
+  maxCrawlPages: null,
+  onPageScore: null,
+  domain: null,
+  extendedCrawlStatus: null,
+  domainChecks: {},
+  brokenLinks: 0,
+  brokenResources: 0,
+  nonIndexable: 0,
+  duplicateTitle: 0,
+  duplicateDescription: 0,
+  duplicateContent: 0,
+};
 
 /** Categories, for callers that want the fixed order without importing shared. */
 export type { AuditCategory };

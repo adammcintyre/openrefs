@@ -481,11 +481,29 @@ export const CHECK_DEFINITIONS: Record<string, CheckDefinition> = {
     label: "No character-encoding meta tag",
     failsWhen: true,
   },
+  /*
+   * Informational, and deliberately so — this is the one check whose polarity
+   * the live proof contradicted.
+   *
+   * Observed 2026-08-29: brandpacks.com serves `charset=UTF-8` in both the
+   * HTTP `Content-Type` header and a `<meta charset>` tag — consistent by any
+   * reading — and DataForSEO reported `meta_charset_consistency: false` on all
+   * 25 crawled pages. Under the natural reading ("true = consistent") that
+   * would have put a warning on every page of a site with nothing wrong with
+   * it, which is the single worst thing an audit can do: 25 false positives
+   * drown the seven real title problems.
+   *
+   * One site cannot tell us whether the flag is inverted or simply stricter
+   * than it sounds, and guessing a *new* polarity from one sample is no better
+   * than the guess it replaces. So it is counted for nobody until someone
+   * establishes what it means. `no_encoding_meta_tag` carries the localization
+   * category on its own and is unambiguous.
+   */
   meta_charset_consistency: {
     category: "localization",
-    severity: "warning",
-    label: "Character encoding declared inconsistently",
-    failsWhen: false,
+    severity: "notice",
+    label: "Character encoding declaration",
+    failsWhen: null,
   },
 
   /* --- Links ---------------------------------------------------------------- */

@@ -29,7 +29,12 @@ import { eq } from "drizzle-orm";
 import { audits, projects } from "../../db";
 import type { AuditSummary } from "../../shared/audits";
 import { readAuditRecord, writeAuditRecord } from "../audit/record";
-import { ingestCrawl } from "../audit/pipeline";
+import {
+  coreWebVitalsResult,
+  ingestCrawl,
+  withCoreWebVitals,
+} from "../audit/pipeline";
+import { auditIssuesKey, putAuditJson } from "../audit/storage";
 import { createDataForSeoApi } from "../dataforseo";
 import { ApiException } from "../http";
 import { enqueueJob } from "./queue";
@@ -46,8 +51,15 @@ export interface AuditPollPayload {
   lighthousePosted: boolean;
   /** Sections already written to R2, so a retry does not re-pull them. */
   sectionsIngested: string[];
-  /** Epoch ms the crawl first reported finished. Starts the Lighthouse grace. */
+  /** Epoch ms the crawl first reported finished. Bounds the Lighthouse chase. */
   crawlFinishedAt?: number;
+  /**
+   * This job exists only to attach a late Lighthouse run to an audit that has
+   * already been published. Without the flag, the handler's "already done"
+   * guard would skip it — which is exactly what should happen to every *other*
+   * job that finds a finished audit.
+   */
+  lighthouseOnly?: boolean;
 }
 
 /**
@@ -71,15 +83,22 @@ export const AUDIT_FIRST_POLL_DELAY_MS = 60_000;
 export const AUDIT_WINDOW_MS = 24 * 60 * 60_000;
 
 /**
- * How long the finished crawl waits for a straggling Lighthouse run.
+ * How long we keep chasing a Lighthouse run **after** the audit is already
+ * finished and published.
  *
- * Lighthouse is posted on the first poll, roughly a minute in, and typically
- * returns in one to two minutes — well before a crawl of any size finishes. So
- * this grace period is almost never used; it exists so that the one time
- * Lighthouse is stuck, the audit completes five minutes late rather than
- * waiting on it for a day.
+ * DataForSEO document the Lighthouse standard queue at "up to 45 minutes
+ * average", which is the fact that shapes this whole flow. Observed live
+ * (2026-08-29): a 25-page crawl of brandpacks.com finished in under a minute,
+ * long before its Lighthouse task. So making the audit wait for Lighthouse
+ * would routinely hold back sixteen complete categories for the sake of one
+ * strip — and a five-minute grace, which is what this constant used to be,
+ * would simply have meant the CWV strip was almost always empty.
+ *
+ * Instead the audit completes the moment the crawl is ingested, and Lighthouse
+ * is attached later by a follow-up poll. An hour is comfortably past their
+ * quoted worst case.
  */
-export const LIGHTHOUSE_GRACE_MS = 5 * 60_000;
+export const LIGHTHOUSE_WINDOW_MS = 60 * 60_000;
 
 /** Backoff between polls: 1 minute doubling to a 5-minute ceiling. */
 export function auditPollDelayMs(polls: number): number {
@@ -111,8 +130,22 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
   if (row === undefined) {
     return { skipped: "audit_deleted", auditId: payload.auditId };
   }
-  if (row.status === "done" || row.status === "failed") {
-    return { skipped: `already_${row.status}`, auditId: row.id };
+
+  /*
+   * A finished audit is normally the end of the line — except for the one
+   * continuation this job supports: an audit that published without its
+   * Lighthouse run and is still inside `LIGHTHOUSE_WINDOW_MS`. That run is
+   * chased on a `lighthouseOnly` job, which patches the published summary in
+   * place. Everything else stops here.
+   */
+  if (row.status === "done") {
+    if (!payload.lighthouseOnly) {
+      return { skipped: "already_done", auditId: row.id };
+    }
+    return attachLighthouse(ctx, row, payload);
+  }
+  if (row.status === "failed") {
+    return { skipped: "already_failed", auditId: row.id };
   }
   if (row.dfsTaskId === null) {
     await failAudit(ctx, row.id, "This audit has no crawl task to poll.");
@@ -216,44 +249,11 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
   }
 
   /*
-   * The crawl is finished. Collect Lighthouse if it is ready; if it is not,
-   * wait out `LIGHTHOUSE_GRACE_MS` before completing without it — see the
-   * constant for why that wait is almost always zero in practice.
+   * The crawl is finished, so the audit finishes now — with Lighthouse if it
+   * happens to be ready, without it otherwise. The audit is never held back
+   * waiting: see `LIGHTHOUSE_WINDOW_MS`.
    */
-  const crawlFinishedAt = payload.crawlFinishedAt ?? now.getTime();
   const lighthouse = await collectLighthouse(dfs, lighthouseTaskId, row.domain);
-
-  if (lighthouse.state === "pending") {
-    const waited = now.getTime() - crawlFinishedAt;
-    if (waited < LIGHTHOUSE_GRACE_MS) {
-      await db
-        .update(audits)
-        .set({
-          summaryJson: writeAuditRecord({ ...record, progress, lighthouseTaskId }),
-        })
-        .where(eq(audits.id, row.id));
-
-      const nextJobId = await enqueueJob(db, {
-        type: "audit_poll",
-        workspaceId: row.workspaceId,
-        payload: {
-          ...payload,
-          polls: payload.polls + 1,
-          lighthousePosted,
-          crawlFinishedAt,
-        },
-        runAt: new Date(now.getTime() + auditPollDelayMs(0)),
-      });
-
-      return {
-        auditId: row.id,
-        crawlProgress: "finished",
-        waitingForLighthouse: true,
-        waitedMs: waited,
-        nextJobId,
-      };
-    }
-  }
 
   /*
    * Everything below happens once, in one run: pull the sections, classify,
@@ -283,7 +283,7 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
       lighthouse.state === "ready"
         ? null
         : lighthouse.state === "pending"
-          ? "Lighthouse did not finish in time; the crawl results are complete."
+          ? "Core Web Vitals are still being measured; they will appear here shortly. The crawl results below are complete."
           : lighthouse.note,
     ingestedAt: now.toISOString(),
   };
@@ -302,6 +302,27 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
     })
     .where(eq(audits.id, row.id));
 
+  /*
+   * The audit is published. If Lighthouse is still running, keep chasing it on
+   * a follow-up job that patches the summary in place — the user has their
+   * sixteen categories now, and the CWV strip fills in when it arrives.
+   */
+  let lighthouseJobId: string | null = null;
+  if (lighthouse.state === "pending") {
+    lighthouseJobId = await enqueueJob(db, {
+      type: "audit_poll",
+      workspaceId: row.workspaceId,
+      payload: {
+        ...payload,
+        polls: payload.polls + 1,
+        lighthousePosted,
+        lighthouseOnly: true,
+        crawlFinishedAt: payload.crawlFinishedAt ?? now.getTime(),
+      },
+      runAt: new Date(now.getTime() + auditPollDelayMs(0)),
+    });
+  }
+
   return {
     auditId: row.id,
     ingested: true,
@@ -310,6 +331,7 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
     pagesWithIssues: finalSummary.pagesWithIssues,
     totalIssues: finalSummary.totalIssues,
     lighthouse: lighthouse.state,
+    lighthouseJobId,
     sections: ingested.sectionsWritten,
     blobs: ingested.blobsWritten,
     polls: payload.polls,
@@ -319,6 +341,129 @@ export async function auditPoll(ctx: JobContext): Promise<JobDetail> {
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
+
+/** One row of the audit+project join the handler works from. */
+type AuditRow = {
+  id: string;
+  projectId: string;
+  dfsTaskId: string | null;
+  status: string;
+  summaryJson: Record<string, unknown>;
+  workspaceId: string;
+  domain: string;
+};
+
+/**
+ * Attaches a late Lighthouse run to an audit that already published.
+ *
+ * Patches only what Lighthouse owns — the scores strip and the Core Web Vitals
+ * category — rather than re-running ingest: the crawl data is unchanged, and
+ * re-pulling every section to recompute one category would spend the
+ * subrequest budget to arrive at the same sixteen answers.
+ *
+ * Gives up quietly at `LIGHTHOUSE_WINDOW_MS`, leaving the note in place. A
+ * missing CWV strip on an otherwise complete audit is a small, honest gap.
+ */
+async function attachLighthouse(
+  ctx: JobContext,
+  row: AuditRow,
+  payload: AuditPollPayload,
+): Promise<JobDetail> {
+  const { env, db, now } = ctx;
+  const record = readAuditRecord(row.summaryJson);
+  const summary = record.summary;
+
+  if (summary === null || summary.lighthouse !== null) {
+    return { skipped: "lighthouse_not_needed", auditId: row.id };
+  }
+
+  const since = payload.crawlFinishedAt ?? payload.postedAt;
+  if (now.getTime() - since > LIGHTHOUSE_WINDOW_MS) {
+    await db
+      .update(audits)
+      .set({
+        summaryJson: writeAuditRecord({
+          ...record,
+          summary: {
+            ...summary,
+            lighthouseNote:
+              "Core Web Vitals could not be measured for this audit. The crawl results are complete.",
+          },
+        }),
+      })
+      .where(eq(audits.id, row.id));
+    return { auditId: row.id, lighthouse: "gave_up" };
+  }
+
+  const dfs = await createDataForSeoApi(env, db, row.workspaceId);
+  const outcome = await collectLighthouse(
+    dfs,
+    record.lighthouseTaskId,
+    row.domain,
+  );
+
+  if (outcome.state === "pending") {
+    const nextJobId = await enqueueJob(db, {
+      type: "audit_poll",
+      workspaceId: row.workspaceId,
+      payload: { ...payload, polls: payload.polls + 1 },
+      runAt: new Date(now.getTime() + auditPollDelayMs(payload.polls)),
+    });
+    return { auditId: row.id, lighthouse: "pending", nextJobId };
+  }
+
+  if (outcome.state === "unavailable") {
+    await db
+      .update(audits)
+      .set({
+        summaryJson: writeAuditRecord({
+          ...record,
+          summary: { ...summary, lighthouseNote: outcome.note },
+        }),
+      })
+      .where(eq(audits.id, row.id));
+    return { auditId: row.id, lighthouse: "unavailable" };
+  }
+
+  const cwv = coreWebVitalsResult(outcome.lighthouse, row.domain);
+
+  // The drill-down blob too, so "2 affected pages" in the table has something
+  // behind it when someone clicks through.
+  if (cwv.pages.length > 0) {
+    await putAuditJson(
+      env.BLOBS,
+      auditIssuesKey(row.workspaceId, row.id, "core_web_vitals"),
+      cwv.pages,
+    );
+  }
+
+  await db
+    .update(audits)
+    .set({
+      summaryJson: writeAuditRecord({
+        ...record,
+        summary: {
+          ...summary,
+          lighthouse: outcome.lighthouse,
+          lighthouseNote: null,
+          categories: withCoreWebVitals(
+            summary.categories,
+            outcome.lighthouse,
+            row.domain,
+          ),
+        },
+      }),
+    })
+    .where(eq(audits.id, row.id));
+
+  return {
+    auditId: row.id,
+    lighthouse: "attached",
+    performance: outcome.lighthouse.performance,
+    lcpMs: outcome.lighthouse.lcpMs,
+    cwvAffectedPages: cwv.category.affectedPages,
+  };
+}
 
 type LighthouseOutcome =
   | { state: "ready"; lighthouse: NonNullable<AuditSummary["lighthouse"]> }
@@ -410,6 +555,7 @@ function readPayload(raw: Record<string, unknown>): AuditPollPayload {
     postedAt,
     polls: typeof raw["polls"] === "number" ? raw["polls"] : 0,
     lighthousePosted: raw["lighthousePosted"] === true,
+    lighthouseOnly: raw["lighthouseOnly"] === true,
     sectionsIngested: Array.isArray(sectionsRaw)
       ? sectionsRaw.filter((s): s is string => typeof s === "string")
       : [],
