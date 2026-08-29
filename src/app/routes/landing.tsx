@@ -17,8 +17,9 @@ import { NAV_GROUPS } from "./nav";
  *     page can only ever use our own vocabulary. The banned Ahrefs/Moz marks
  *     have no way in.
  *   - Nothing on this page claims a user count, a customer, or a result. No
- *     testimonials, no metrics, no competitor logos or screenshots. The phase
- *     badge on every module keeps it honest that these are not built yet.
+ *     testimonials, no metrics, no competitor logos or screenshots. Each
+ *     module is badged Live or with the phase that ships it (from
+ *     NavItem.live), so the page never overstates what exists today.
  */
 const MODULES = NAV_GROUPS.flatMap((group) =>
   group.items.map((item) => ({ ...item, group: group.label })),
@@ -108,7 +109,8 @@ export function Landing() {
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
               Five research tools you can point at any domain, and four that
-              track a site you own. Each ships in the phase marked below.
+              track a site you own. Four are live today — the rest ship in
+              the phase marked below.
             </p>
           </div>
 
@@ -125,7 +127,13 @@ export function Landing() {
                           aria-hidden="true"
                         />
                       </span>
-                      <Badge variant="neutral">Phase {module.phase}</Badge>
+                      {module.live ? (
+                        <Badge variant="success">Live</Badge>
+                      ) : (
+                        <Badge variant="info">
+                          Arrives in Phase {module.phase}
+                        </Badge>
+                      )}
                     </div>
                     <h3 className="text-sm font-semibold text-foreground">
                       {module.label}

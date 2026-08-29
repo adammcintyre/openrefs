@@ -1,8 +1,19 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Field,
+  Input,
+  Skeleton,
+} from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useActiveWorkspace, useUpdateWorkspace } from "../../lib/workspaces";
-import { Alert, Button, NoWorkspace, Section, TextField } from "./ui";
 
 export function GeneralSettings() {
   const { activeWorkspace, isPending } = useActiveWorkspace();
@@ -20,8 +31,17 @@ export function GeneralSettings() {
     setSaved(false);
   }, [activeWorkspace?.id, activeWorkspace?.name, activeWorkspace?.spendCapUsd]);
 
-  if (isPending) return <Section title="General">Loading…</Section>;
-  if (activeWorkspace === null) return <NoWorkspace />;
+  if (isPending) return <Skeleton className="h-48 w-full" />;
+  if (activeWorkspace === null) {
+    return (
+      <Card>
+        <EmptyState
+          title="No workspace"
+          description="Create a workspace from the switcher in the header to get started."
+        />
+      </Card>
+    );
+  }
 
   const canEdit = activeWorkspace.role !== "member";
 
@@ -41,58 +61,80 @@ export function GeneralSettings() {
   const capInvalid = !Number.isFinite(capValue) || capValue < 0;
 
   return (
-    <form onSubmit={onSubmit} className="space-y-6">
-      <Section
-        title="General"
-        description="The workspace name is shown in the switcher and on invites."
-      >
-        <div className="space-y-5">
-          <TextField
-            id="workspace-name"
-            label="Workspace name"
-            value={name}
-            onChange={setName}
-            disabled={!canEdit}
-          />
+    <form onSubmit={onSubmit}>
+      <Card>
+        <CardHeader>
+          <CardTitle>General</CardTitle>
+          <CardDescription>
+            The workspace name is shown in the switcher and on invites.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <Field label="Workspace name">
+            {(field) => (
+              <Input
+                {...field}
+                value={name}
+                disabled={!canEdit}
+                onChange={(event) => setName(event.target.value)}
+              />
+            )}
+          </Field>
 
-          <TextField
-            id="spend-cap"
+          <Field
             label="Monthly spend cap (USD)"
-            type="number"
-            value={spendCap}
-            onChange={setSpendCap}
-            disabled={!canEdit}
             hint="A ceiling on DataForSEO spend per calendar month. 0 blocks every paid call; cached results are always free and always allowed."
-          />
-
-          {capInvalid && <Alert tone="error">Enter 0 or a positive amount.</Alert>}
+            error={capInvalid ? "Enter 0 or a positive amount." : undefined}
+          >
+            {(field) => (
+              <Input
+                {...field}
+                type="number"
+                value={spendCap}
+                disabled={!canEdit}
+                onChange={(event) => setSpendCap(event.target.value)}
+              />
+            )}
+          </Field>
 
           {!canEdit && (
-            <Alert tone="info">
+            <p
+              role="status"
+              className="rounded-app border border-info-subtle bg-info-subtle px-3 py-2 text-sm text-info-on-subtle"
+            >
               You need the admin or owner role to change these settings.
-            </Alert>
+            </p>
           )}
 
           {update.error !== null && (
-            <Alert tone="error">
+            <p
+              role="alert"
+              className="rounded-app border border-danger-subtle bg-danger-subtle px-3 py-2 text-sm text-danger-on-subtle"
+            >
               {errorMessage(update.error, "Could not save your changes.")}
-            </Alert>
+            </p>
           )}
 
           {saved && update.error === null && (
-            <Alert tone="success">Saved.</Alert>
+            <p
+              role="status"
+              className="rounded-app border border-success-subtle bg-success-subtle px-3 py-2 text-sm text-success-on-subtle"
+            >
+              Saved.
+            </p>
           )}
 
           {canEdit && (
             <Button
               type="submit"
+              loading={update.isPending}
               disabled={update.isPending || capInvalid || name.trim() === ""}
             >
-              {update.isPending ? "Saving…" : "Save changes"}
+              Save changes
             </Button>
           )}
-        </div>
-      </Section>
+        </CardContent>
+      </Card>
     </form>
   );
 }

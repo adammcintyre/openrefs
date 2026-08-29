@@ -1,5 +1,18 @@
 import { useState, type FormEvent } from "react";
 
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Dialog,
+  EmptyState,
+  Field,
+  Input,
+  Skeleton,
+} from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import {
   useActiveWorkspace,
@@ -7,15 +20,9 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from "../../lib/workspaces";
-import {
-  Alert,
-  Button,
-  NoWorkspace,
-  Section,
-  TextField,
-  copyToClipboard,
-  formatDate,
-} from "./ui";
+import { copyToClipboard, formatDate } from "./utils";
+
+const CREATE_FORM_ID = "create-api-key-form";
 
 export function ApiKeysSettings() {
   const { activeWorkspace, isPending } = useActiveWorkspace();
@@ -32,16 +39,33 @@ export function ApiKeysSettings() {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  if (isPending) return <Section title="API keys">Loading…</Section>;
-  if (activeWorkspace === null) return <NoWorkspace />;
+  if (isPending) return <Skeleton className="h-48 w-full" />;
+  if (activeWorkspace === null) {
+    return (
+      <Card>
+        <EmptyState
+          title="No workspace"
+          description="Create a workspace from the switcher in the header to get started."
+        />
+      </Card>
+    );
+  }
 
   if (!canManage) {
     return (
-      <Section title="API keys">
-        <Alert tone="info">
-          You need the admin or owner role to manage API keys.
-        </Alert>
-      </Section>
+      <Card>
+        <CardHeader>
+          <CardTitle>API keys</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p
+            role="status"
+            className="rounded-app border border-info-subtle bg-info-subtle px-3 py-2 text-sm text-info-on-subtle"
+          >
+            You need the admin or owner role to manage API keys.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -69,16 +93,21 @@ export function ApiKeysSettings() {
   };
 
   return (
-    <div className="space-y-6">
-      <Section
-        title="API keys"
-        description="Keys let scripts read this workspace over the API. They act with the member role, so a key can read data but cannot change settings, members or credentials."
-      >
-        <div className="space-y-5">
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>API keys</CardTitle>
+          <CardDescription>
+            Keys let scripts read this workspace over the API. They act with
+            the member role, so a key can read data but cannot change
+            settings, members or credentials.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
           {keys.isPending ? (
-            <p className="text-sm text-muted-foreground">Loading keys…</p>
+            <Skeleton className="h-24 w-full" />
           ) : (keys.data ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">No API keys yet.</p>
+            <EmptyState title="No API keys yet" />
           ) : (
             <ul className="divide-y divide-border">
               {(keys.data ?? []).map((key) => (
@@ -110,93 +139,98 @@ export function ApiKeysSettings() {
           )}
 
           {revokeKey.error !== null && (
-            <Alert tone="error">
+            <p
+              role="alert"
+              className="rounded-app border border-danger-subtle bg-danger-subtle px-3 py-2 text-sm text-danger-on-subtle"
+            >
               {errorMessage(revokeKey.error, "Could not revoke that key.")}
-            </Alert>
+            </p>
           )}
 
           <Button onClick={() => setDialogOpen(true)}>Create API key</Button>
-        </div>
-      </Section>
+        </CardContent>
+      </Card>
 
-      {dialogOpen && (
-        <div className="fixed inset-0 z-30 flex items-start justify-center bg-black/40 p-6 pt-24">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="api-key-dialog-title"
-            className="w-full max-w-lg rounded-app border border-border bg-surface p-6"
-          >
-            <h2
-              id="api-key-dialog-title"
-              className="text-base font-semibold text-foreground"
+      <Dialog
+        open={dialogOpen}
+        onClose={closeDialog}
+        title={newKey === null ? "Create an API key" : "Copy your API key"}
+        footer={
+          newKey === null ? (
+            <>
+              <Button variant="secondary" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                form={CREATE_FORM_ID}
+                loading={createKey.isPending}
+                disabled={createKey.isPending || name.trim() === ""}
+              >
+                Create key
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={closeDialog}>
+                Done
+              </Button>
+              <Button
+                onClick={() => {
+                  void copyToClipboard(newKey).then(setCopied);
+                }}
+              >
+                Copy key
+              </Button>
+              {copied && (
+                <span className="text-xs text-muted-foreground">Copied.</span>
+              )}
+            </>
+          )
+        }
+      >
+        {newKey === null ? (
+          <form id={CREATE_FORM_ID} onSubmit={onCreate} className="space-y-4">
+            <Field
+              label="Name"
+              hint="Something you will recognise later, so you know what to revoke."
             >
-              {newKey === null ? "Create an API key" : "Copy your API key"}
-            </h2>
-
-            {newKey === null ? (
-              <form onSubmit={onCreate} className="mt-5 space-y-4">
-                <TextField
-                  id="api-key-name"
-                  label="Name"
+              {(field) => (
+                <Input
+                  {...field}
                   value={name}
-                  onChange={setName}
                   placeholder="CI reporting"
-                  hint="Something you will recognise later, so you know what to revoke."
+                  onChange={(event) => setName(event.target.value)}
                 />
+              )}
+            </Field>
 
-                {createKey.error !== null && (
-                  <Alert tone="error">
-                    {errorMessage(createKey.error, "Could not create the key.")}
-                  </Alert>
-                )}
-
-                <div className="flex gap-2">
-                  <Button
-                    type="submit"
-                    disabled={createKey.isPending || name.trim() === ""}
-                  >
-                    {createKey.isPending ? "Creating…" : "Create key"}
-                  </Button>
-                  <Button variant="secondary" onClick={closeDialog}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <div className="mt-5 space-y-4">
-                <Alert tone="info">
-                  This is the only time this key will be shown. We store only a
-                  hash of it, so it cannot be displayed again — copy it now and
-                  keep it somewhere safe.
-                </Alert>
-
-                <code className="block break-all rounded-app border border-border bg-background px-3 py-3 font-mono text-xs text-foreground">
-                  {newKey}
-                </code>
-
-                <div className="flex items-center gap-3">
-                  <Button
-                    onClick={() => {
-                      void copyToClipboard(newKey).then(setCopied);
-                    }}
-                  >
-                    Copy key
-                  </Button>
-                  <Button variant="secondary" onClick={closeDialog}>
-                    Done
-                  </Button>
-                  {copied && (
-                    <span className="text-xs text-muted-foreground">
-                      Copied.
-                    </span>
-                  )}
-                </div>
-              </div>
+            {createKey.error !== null && (
+              <p
+                role="alert"
+                className="rounded-app border border-danger-subtle bg-danger-subtle px-3 py-2 text-sm text-danger-on-subtle"
+              >
+                {errorMessage(createKey.error, "Could not create the key.")}
+              </p>
             )}
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <p
+              role="status"
+              className="rounded-app border border-info-subtle bg-info-subtle px-3 py-2 text-sm text-info-on-subtle"
+            >
+              This is the only time this key will be shown. We store only a
+              hash of it, so it cannot be displayed again — copy it now and
+              keep it somewhere safe.
+            </p>
+
+            <code className="block break-all rounded-app border border-border bg-background px-3 py-3 font-mono text-xs text-foreground">
+              {newKey}
+            </code>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </Dialog>
+    </>
   );
 }
