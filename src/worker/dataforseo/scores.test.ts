@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BACKLINKS_RANK_MAX,
   SCORE_MAX,
+  fromScore,
   toDomainScore,
   toPageScore,
   toScore,
@@ -72,5 +73,33 @@ describe("toScore", () => {
     expect(toPageScore(640)).toBe(64);
     expect(toDomainScore).toBe(toScore);
     expect(toPageScore).toBe(toScore);
+  });
+});
+
+describe("fromScore", () => {
+  it("converts a score back to the rank scale filters use", () => {
+    expect(fromScore(0)).toBe(0);
+    expect(fromScore(30)).toBe(300);
+    expect(fromScore(SCORE_MAX)).toBe(BACKLINKS_RANK_MAX);
+  });
+
+  it("picks the bottom of the band so `>=` keeps the whole band", () => {
+    // Every rank that displays as score 30 is 295..304. A `>= 30` filter must
+    // not exclude the 295..299 half of its own band, so the boundary is the
+    // lowest rank in it, not the middle.
+    expect(fromScore(30)).toBe(300);
+    expect(toScore(fromScore(30))).toBe(30);
+    expect(toScore(fromScore(77))).toBe(77);
+  });
+
+  it("round-trips every score", () => {
+    for (let score = 0; score <= SCORE_MAX; score += 1) {
+      expect(toScore(fromScore(score))).toBe(score);
+    }
+  });
+
+  it("clamps a score from outside the published range", () => {
+    expect(fromScore(-10)).toBe(0);
+    expect(fromScore(150)).toBe(BACKLINKS_RANK_MAX);
   });
 });

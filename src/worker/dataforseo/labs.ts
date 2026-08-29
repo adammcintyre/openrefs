@@ -72,6 +72,10 @@ export const GOOGLE_RELEVANT_PAGES_LIVE =
   "dataforseo_labs/google/relevant_pages/live";
 export const GOOGLE_COMPETITORS_DOMAIN_LIVE =
   "dataforseo_labs/google/competitors_domain/live";
+export const GOOGLE_DOMAIN_INTERSECTION_LIVE =
+  "dataforseo_labs/google/domain_intersection/live";
+export const GOOGLE_PAGE_INTERSECTION_LIVE =
+  "dataforseo_labs/google/page_intersection/live";
 
 /** Documented ceiling on `limit` across the paged Labs endpoints. */
 export const LABS_MAX_LIMIT = 1000;
@@ -669,6 +673,225 @@ export interface CompetitorsDomainResult extends WrappedMeta {
   itemsCount: number | null;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Intersections (domain + page)                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * **The hard limit that shapes the whole Gap feature:** domain_intersection
+ * compares exactly TWO domains. They are `target1` and `target2` — two
+ * separate top-level strings, not a `targets` array and not a numeric-keyed
+ * object (page_intersection is the one with the keyed object). There is no
+ * third target and no documented way to add one, so comparing a site against
+ * four competitors is four pairwise calls merged by the caller.
+ */
+export const DOMAIN_INTERSECTION_MAX_TARGETS = 2;
+
+/** page_intersection's documented ceilings. */
+export const PAGE_INTERSECTION_MAX_PAGES = 20;
+export const PAGE_INTERSECTION_MAX_EXCLUDE_PAGES = 10;
+
+/**
+ * `intersection_mode` — whether the compared pages must all rank on the same
+ * SERP, or merely one of them.
+ *
+ * The default is conditional and therefore not expressible as a static one:
+ * `intersect` when only `pages` is sent, `union` when `exclude_pages` is sent
+ * too. The wrapper passes whatever the caller gives it and no more, so silence
+ * means DataForSEO's own rule applies.
+ */
+export const PAGE_INTERSECTION_MODES = ["union", "intersect"] as const;
+export type PageIntersectionMode = (typeof PAGE_INTERSECTION_MODES)[number];
+
+const domainIntersectionParamsSchema = z.object({
+  /** Bare domains. The docs are explicit: no `https://`, no `www.`. */
+  target1: z.string().trim().min(1),
+  target2: z.string().trim().min(1),
+  locationCode: z.number().int().positive(),
+  languageCode: z.string().trim().min(2).max(8),
+  /**
+   * `true` (their default) → keywords BOTH domains rank for, with a SERP
+   * element for each. `false` → keywords `target1` ranks for and `target2`
+   * does **not**, with data for `target1` only. That second mode is the entire
+   * "competitor ranks, you don't" query, done server-side.
+   */
+  intersections: z.boolean().optional(),
+  itemTypes: z.array(z.enum(LABS_ITEM_TYPES)).min(1).optional(),
+  limit: z.number().int().min(1).max(LABS_MAX_LIMIT).optional(),
+  offset: z.number().int().min(0).optional(),
+  filters: z.array(z.custom<LabsFilter>()).optional(),
+  sorts: z.array(z.custom<LabsSort>()).optional(),
+  fresh: z.boolean().optional(),
+});
+
+export type DomainIntersectionParams = z.input<
+  typeof domainIntersectionParamsSchema
+>;
+
+const pageIntersectionParamsSchema = z.object({
+  /**
+   * Absolute URLs **including the scheme**. Sent as an object keyed "1".."20";
+   * the wrapper builds those keys from this array's order, and the response's
+   * `intersection_result` uses the same keys, so position in this array is the
+   * identity of a page throughout.
+   *
+   * A trailing `/*` wildcard matches a section ("example.com/eng/*"). The docs
+   * are firm that the wildcard must follow a slash — `https://example.com*` is
+   * rejected, `https://example.com/*` is not.
+   */
+  pages: z.array(z.string().trim().min(1)).min(1).max(PAGE_INTERSECTION_MAX_PAGES),
+  /** Keywords the `pages` rank for but these do not. */
+  excludePages: z
+    .array(z.string().trim().min(1))
+    .max(PAGE_INTERSECTION_MAX_EXCLUDE_PAGES)
+    .optional(),
+  intersectionMode: z.enum(PAGE_INTERSECTION_MODES).optional(),
+  /** Their default is `true`; omitted means theirs applies. */
+  includeSubdomains: z.boolean().optional(),
+  ignoreSynonyms: z.boolean().optional(),
+  locationCode: z.number().int().positive(),
+  languageCode: z.string().trim().min(2).max(8),
+  itemTypes: z.array(z.enum(LABS_ITEM_TYPES)).min(1).optional(),
+  limit: z.number().int().min(1).max(LABS_MAX_LIMIT).optional(),
+  offset: z.number().int().min(0).optional(),
+  filters: z.array(z.custom<LabsFilter>()).optional(),
+  sorts: z.array(z.custom<LabsSort>()).optional(),
+  fresh: z.boolean().optional(),
+});
+
+export type PageIntersectionParams = z.input<typeof pageIntersectionParamsSchema>;
+
+/**
+ * A SERP element on either intersection endpoint.
+ *
+ * **Doc trap:** the field-description tables show these nested under
+ * `organic` / `paid` / `local_pack` / `featured_snippet` keys. The actual
+ * response — and every filterable path in their `available_filters` list — is
+ * FLAT, with `type` as the discriminator. Parsing the documented nesting finds
+ * nothing.
+ */
+const intersectionSerpElementSchema = z.object({
+  type: nullableString,
+  /** The ranking. `position` here is the column ("left"/"right"). */
+  rank_group: nullableNumber,
+  rank_absolute: nullableNumber,
+  domain: nullableString,
+  main_domain: nullableString,
+  title: nullableString,
+  url: nullableString,
+  relative_url: nullableString,
+  description: nullableString,
+  etv: nullableNumber,
+  estimated_paid_traffic_cost: nullableNumber,
+});
+
+export interface IntersectionSerpElement {
+  /** "organic" | "paid" | "featured_snippet" | "local_pack". */
+  type: string | null;
+  /** `rank_group` — the ranking. */
+  position: number | null;
+  positionAbsolute: number | null;
+  domain: string | null;
+  mainDomain: string | null;
+  title: string | null;
+  url: string | null;
+  description: string | null;
+  /** Estimated monthly visits this ranking brings. */
+  etv: number | null;
+  estimatedPaidTrafficCostUsd: number | null;
+  raw: unknown;
+}
+
+const domainIntersectionItemSchema = z.object({
+  keyword_data: labsKeywordRowSchema.nullish(),
+  /** target1's ranking. */
+  first_domain_serp_element: intersectionSerpElementSchema.nullish(),
+  /** target2's ranking — null under `intersections: false`, by definition. */
+  second_domain_serp_element: intersectionSerpElementSchema.nullish(),
+});
+
+export interface DomainIntersectionRow {
+  /** Volume, CPC, competition, difficulty and intent for the keyword. */
+  keyword: LabsKeywordRow | null;
+  /** `target1`'s SERP element. */
+  first: IntersectionSerpElement | null;
+  /** `target2`'s SERP element. Always null when `intersections: false`. */
+  second: IntersectionSerpElement | null;
+  raw: unknown;
+}
+
+export interface DomainIntersectionResult extends WrappedMeta {
+  items: DomainIntersectionRow[];
+  totalCount: number | null;
+  itemsCount: number | null;
+}
+
+const pageIntersectionItemSchema = z.object({
+  keyword_data: labsKeywordRowSchema.nullish(),
+  /**
+   * Keyed by the same "1".."20" strings the request's `pages` object used.
+   * The docs' prose calls these "arrays"; they are objects.
+   */
+  intersection_result: z
+    .record(z.string(), intersectionSerpElementSchema.nullish())
+    .nullish(),
+});
+
+export interface PageIntersectionRow {
+  keyword: LabsKeywordRow | null;
+  /** Indexed like the `pages` array that was sent, position for position. */
+  pages: (IntersectionSerpElement | null)[];
+  raw: unknown;
+}
+
+export interface PageIntersectionResult extends WrappedMeta {
+  items: PageIntersectionRow[];
+  totalCount: number | null;
+  itemsCount: number | null;
+}
+
+/**
+ * Filterable/sortable paths shared by both intersection endpoints — the
+ * keyword half of a row. Same `keyword_data.` nesting as ranked_keywords.
+ */
+export const INTERSECTION_KEYWORD_FIELDS = {
+  keyword: "keyword_data.keyword",
+  searchVolume: "keyword_data.keyword_info.search_volume",
+  cpc: "keyword_data.keyword_info.cpc",
+  competition: "keyword_data.keyword_info.competition",
+  keywordDifficulty: "keyword_data.keyword_properties.keyword_difficulty",
+} as const;
+
+/**
+ * domain_intersection's per-target paths. Both sides are filterable and
+ * sortable, so "the competitor outranks me" is a server-side question.
+ *
+ * One documented asymmetry, encoded by its absence:
+ * `second_domain_serp_element.estimated_paid_traffic_cost` is filterable but
+ * `first_domain_serp_element.estimated_paid_traffic_cost` is NOT in their
+ * available-filters list. Neither is offered here, so nothing can depend on it.
+ */
+export const DOMAIN_INTERSECTION_FIELDS = {
+  firstType: "first_domain_serp_element.type",
+  firstPosition: "first_domain_serp_element.rank_group",
+  firstPositionAbsolute: "first_domain_serp_element.rank_absolute",
+  firstEtv: "first_domain_serp_element.etv",
+  secondType: "second_domain_serp_element.type",
+  secondPosition: "second_domain_serp_element.rank_group",
+  secondPositionAbsolute: "second_domain_serp_element.rank_absolute",
+  secondEtv: "second_domain_serp_element.etv",
+} as const;
+
+/**
+ * page_intersection's per-page paths, e.g.
+ * `intersection_result.2.rank_group`. `page` is 1-based, matching the request
+ * keys — filtering "the first URL ranks top 3" needs the page's own number in
+ * the path, and there is no wildcard form.
+ */
+export function pageIntersectionField(page: number, field: string): string {
+  return `intersection_result.${page}.${field}`;
+}
+
 export interface LabsApi {
   googleKeywordOverviewLive(
     params: KeywordOverviewParams,
@@ -699,6 +922,12 @@ export interface LabsApi {
   googleCompetitorsDomainLive(
     params: CompetitorsDomainParams,
   ): Promise<CompetitorsDomainResult>;
+  googleDomainIntersectionLive(
+    params: DomainIntersectionParams,
+  ): Promise<DomainIntersectionResult>;
+  googlePageIntersectionLive(
+    params: PageIntersectionParams,
+  ): Promise<PageIntersectionResult>;
 }
 
 const keywordIdeasResultSchema = labsWrapperSchema(z.unknown());
@@ -1182,6 +1411,205 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         cached: response.cached,
       };
     },
+
+    async googleDomainIntersectionLive(params) {
+      const {
+        target1,
+        target2,
+        locationCode,
+        languageCode,
+        intersections,
+        itemTypes,
+        limit,
+        offset,
+        filters,
+        sorts,
+        fresh,
+      } = parseParams(
+        domainIntersectionParamsSchema,
+        params,
+        `Invalid domain intersection request (limit must be 1–${LABS_MAX_LIMIT}).`,
+      );
+
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_DOMAIN_INTERSECTION_LIVE,
+        payload: [
+          {
+            // Two flat strings. There is no third target on this endpoint.
+            target1: normalizeTarget(target1),
+            target2: normalizeTarget(target2),
+            location_code: locationCode,
+            language_code: languageCode,
+            intersections,
+            item_types: itemTypes,
+            limit,
+            offset,
+            filters: toLabsFilters(filters ?? []),
+            order_by: toLabsOrderBy(sorts ?? []),
+          },
+        ],
+        // Rankings, the same 7-day bucket as ranked_keywords.
+        ttl: "short",
+        fresh,
+      });
+
+      const wrapper = parseWrapper(
+        response.results[0],
+        GOOGLE_DOMAIN_INTERSECTION_LIVE,
+      );
+      return {
+        items: wrapper.items.map(toDomainIntersectionRow),
+        totalCount: wrapper.total_count,
+        itemsCount: wrapper.items_count,
+        costUsd: response.costUsd,
+        cached: response.cached,
+      };
+    },
+
+    async googlePageIntersectionLive(params) {
+      const {
+        pages,
+        excludePages,
+        intersectionMode,
+        includeSubdomains,
+        ignoreSynonyms,
+        locationCode,
+        languageCode,
+        itemTypes,
+        limit,
+        offset,
+        filters,
+        sorts,
+        fresh,
+      } = parseParams(
+        pageIntersectionParamsSchema,
+        params,
+        `Invalid page intersection request (max ${PAGE_INTERSECTION_MAX_PAGES} pages, limit 1–${LABS_MAX_LIMIT}).`,
+      );
+
+      const response = await client.request<unknown>({
+        endpoint: GOOGLE_PAGE_INTERSECTION_LIVE,
+        payload: [
+          {
+            // An OBJECT keyed "1".."20", not an array — the one place in this
+            // file where a list goes on the wire as numbered keys.
+            pages: toNumberedPages(pages),
+            // ...while `exclude_pages` really is a plain array. Not symmetric.
+            exclude_pages: excludePages,
+            intersection_mode: intersectionMode,
+            include_subdomains: includeSubdomains,
+            ignore_synonyms: ignoreSynonyms,
+            location_code: locationCode,
+            language_code: languageCode,
+            item_types: itemTypes,
+            limit,
+            offset,
+            filters: toLabsFilters(filters ?? []),
+            order_by: toLabsOrderBy(sorts ?? []),
+          },
+        ],
+        ttl: "short",
+        fresh,
+      });
+
+      const wrapper = parseWrapper(
+        response.results[0],
+        GOOGLE_PAGE_INTERSECTION_LIVE,
+      );
+      return {
+        items: wrapper.items.map((raw) => toPageIntersectionRow(raw, pages.length)),
+        totalCount: wrapper.total_count,
+        itemsCount: wrapper.items_count,
+        costUsd: response.costUsd,
+        cached: response.cached,
+      };
+    },
+  };
+}
+
+/**
+ * `["a", "b"]` → `{ "1": "a", "2": "b" }`.
+ *
+ * The keys are 1-based strings because that is what `intersection_result` uses
+ * to report each page's ranking, and what a filter path has to name
+ * (`intersection_result.2.rank_group`). Keeping the array's order as the key
+ * order is what lets the route map results back to the URLs it was asked about.
+ */
+export function toNumberedPages(pages: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  pages.forEach((page, index) => {
+    out[String(index + 1)] = page.trim();
+  });
+  return out;
+}
+
+function toIntersectionSerpElement(
+  raw: z.infer<typeof intersectionSerpElementSchema> | null | undefined,
+  original: unknown,
+): IntersectionSerpElement | null {
+  if (!raw) return null;
+  return {
+    type: raw.type,
+    // `rank_group` is the ranking; `position` is the SERP column.
+    position: raw.rank_group,
+    positionAbsolute: raw.rank_absolute,
+    domain: raw.domain,
+    mainDomain: raw.main_domain,
+    title: raw.title,
+    url: raw.url,
+    description: raw.description,
+    etv: raw.etv,
+    estimatedPaidTrafficCostUsd: raw.estimated_paid_traffic_cost,
+    raw: original,
+  };
+}
+
+function toDomainIntersectionRow(raw: unknown): DomainIntersectionRow {
+  const item = domainIntersectionItemSchema.parse(raw);
+  const source = raw as Record<string, unknown> | null;
+  return {
+    keyword: item.keyword_data
+      ? fromKeywordRow(item.keyword_data, source?.["keyword_data"])
+      : null,
+    first: toIntersectionSerpElement(
+      item.first_domain_serp_element,
+      source?.["first_domain_serp_element"],
+    ),
+    second: toIntersectionSerpElement(
+      item.second_domain_serp_element,
+      source?.["second_domain_serp_element"],
+    ),
+    raw,
+  };
+}
+
+/**
+ * Turns `intersection_result`'s numbered keys back into an array positioned
+ * like the `pages` the caller sent, so index 0 is always page 1. A page that
+ * does not rank for this keyword is `null` in its slot rather than missing,
+ * which is what keeps a table column aligned.
+ */
+function toPageIntersectionRow(raw: unknown, pageCount: number): PageIntersectionRow {
+  const item = pageIntersectionItemSchema.parse(raw);
+  const source = raw as Record<string, unknown> | null;
+  const results = item.intersection_result ?? {};
+  const rawResults = (source?.["intersection_result"] ?? {}) as Record<
+    string,
+    unknown
+  >;
+
+  const pages: (IntersectionSerpElement | null)[] = [];
+  for (let index = 0; index < pageCount; index += 1) {
+    const key = String(index + 1);
+    pages.push(toIntersectionSerpElement(results[key], rawResults[key]));
+  }
+
+  return {
+    keyword: item.keyword_data
+      ? fromKeywordRow(item.keyword_data, source?.["keyword_data"])
+      : null,
+    pages,
+    raw,
   };
 }
 

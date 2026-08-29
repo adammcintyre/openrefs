@@ -23,6 +23,8 @@ const MOUNT_PROBES: Record<string, string> = {
   "/usage": "/usage",
   "/keywords": "/keywords/overview",
   "/domains": "/domains/overview",
+  "/backlinks": "/backlinks/summary",
+  "/gap": "/gap/keywords",
   "/collections": "/collections",
   "/meta": "/meta/locations",
   "/dev": "/dev/dfs-smoke",
@@ -98,6 +100,18 @@ describe("session guard", () => {
     ["GET", "/domains/pages"],
     ["GET", "/domains/competitors"],
     ["GET", "/domains/countries"],
+    // Phase 2. Same rule as above: these spend money, so the 401 lands before
+    // validation and an anonymous caller never learns whether their query was
+    // well-formed.
+    ["GET", "/backlinks/summary"],
+    ["GET", "/backlinks/list"],
+    ["GET", "/backlinks/referring-domains"],
+    ["GET", "/backlinks/anchors"],
+    ["GET", "/backlinks/history"],
+    ["POST", "/backlinks/scores"],
+    ["GET", "/gap/keywords"],
+    ["GET", "/gap/keywords/export.csv"],
+    ["GET", "/gap/pages"],
     ["GET", "/collections"],
     ["POST", "/collections"],
     ["GET", "/collections/abc"],

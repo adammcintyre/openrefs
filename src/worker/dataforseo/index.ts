@@ -7,6 +7,8 @@
  * way to build a wrapper without a workspace, which is the point.
  */
 import type { Db } from "../../db";
+import type { BacklinksApi } from "./backlinks";
+import { createBacklinksApi } from "./backlinks";
 import type { CreateClientOptions, DataForSeoClient } from "./client";
 import { createDataForSeoClient } from "./client";
 import { resolveWorkspaceCredentials } from "./credentials";
@@ -19,6 +21,7 @@ import { createMetaApi } from "./meta";
 import type { SerpApi } from "./serp";
 import { createSerpApi } from "./serp";
 
+export * from "./backlinks";
 export * from "./client";
 export * from "./credentials";
 export * from "./filters";
@@ -27,6 +30,7 @@ export * from "./labs";
 export * from "./meta";
 export * from "./metering";
 export * from "./schema";
+export * from "./scores";
 export * from "./serp";
 
 export interface DataForSeoApi {
@@ -34,6 +38,7 @@ export interface DataForSeoApi {
   client: DataForSeoClient;
   keywordsData: KeywordsDataApi;
   labs: LabsApi;
+  backlinks: BacklinksApi;
   serp: SerpApi;
   /** The zero-cost reference lists. The only globally-cached family. */
   meta: MetaApi;
@@ -47,6 +52,7 @@ export function createDataForSeoApiFromClient(
     client,
     keywordsData: createKeywordsDataApi(client),
     labs: createLabsApi(client),
+    backlinks: createBacklinksApi(client),
     serp: createSerpApi(client),
     meta: createMetaApi(client),
   };

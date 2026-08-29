@@ -163,6 +163,24 @@ export function rangeFilters(
 }
 
 /**
+ * A reference to another field on the same row, for the right-hand side of a
+ * filter: `["a.rank", "<", itemFieldRef("b.rank")]` asks DataForSEO to compare
+ * two fields of the same item rather than a field against a constant.
+ *
+ * The `$item->` prefix is the documented form. Two constraints from their
+ * docs: both sides must have the same type (num against num), and the form is
+ * supported on a named subset of endpoints — domain_intersection and
+ * page_intersection among them, but **not on the Backlinks API at all**, which
+ * documents no field-to-field comparison.
+ *
+ * This is what makes "the competitor already outranks me" a server-side
+ * question instead of a page of rows filtered after we have paid for them.
+ */
+export function itemFieldRef(field: string): string {
+  return `$item->${field}`;
+}
+
+/**
  * A substring match. DataForSEO's `like` requires the caller to supply its own
  * wildcards — `"like", "seo"` matches only the exact string — so the needle is
  * wrapped in `%`.

@@ -62,3 +62,21 @@ export function toScore(rank: number | null | undefined): number | null {
  */
 export const toDomainScore = toScore;
 export const toPageScore = toScore;
+
+/**
+ * The inverse: a 0–100 score back to the 0–1000 rank, for **filters only**.
+ *
+ * The Backlinks API filters on its own scale, so "only show me links from
+ * domains scoring 30+" has to travel as `["domain_from_rank", ">=", 300]`. This
+ * is the one legitimate direction for the raw scale — it goes out in a request,
+ * never back in a response.
+ *
+ * A score is coarser than a rank (each point covers ten ranks), so the boundary
+ * is chosen deliberately: score × 10 is the *lowest* rank that rounds to that
+ * score, which makes `>=` inclusive of the whole band the user asked for.
+ * Rounding to the middle would silently drop half of it.
+ */
+export function fromScore(score: number): number {
+  const clamped = Math.min(Math.max(score, 0), SCORE_MAX);
+  return Math.round(clamped * (BACKLINKS_RANK_MAX / SCORE_MAX));
+}
