@@ -26,11 +26,15 @@ export const DFS_SANDBOX_BASE_URL = "https://sandbox.dataforseo.com/v3/";
 export const DFS_OK_STATUS = 20000;
 
 /**
- * Hard ceiling on one upstream call. Live Labs endpoints routinely take tens
- * of seconds; anything past a minute is a hung connection, not slow work. The
- * Workers CPU limit is unaffected — this is wall-clock on a network wait.
+ * Per-attempt ceiling on one upstream connection. Observed in production
+ * (2026-08, search_volume and backlinks/summary): a single connection can hang
+ * 60s+ while an immediate retry answers in under a second — the stall is
+ * per-connection, not per-query. Two attempts of 30s therefore beat one of
+ * 60s. Wall-clock on a network wait; the Workers CPU limit is unaffected.
  */
-export const REQUEST_TIMEOUT_MS = 60_000;
+export const ATTEMPT_TIMEOUT_MS = 30_000;
+/** Attempts per call. Retries happen ONLY when no HTTP response arrived. */
+export const RETRY_ATTEMPTS = 2;
 
 /**
  * Cache lifetimes from docs/ARCHITECTURE.md, in seconds, passed to KV as
@@ -307,31 +311,41 @@ export function createDataForSeoClient(
   ): Promise<DfsEnvelope<TResult>> {
     const url = new URL(endpoint, baseUrl).toString();
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method,
-        headers: {
-          Authorization: authHeader,
-          "Content-Type": "application/json",
-        },
-        body: method === "POST" ? JSON.stringify(payload) : undefined,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (err) {
-      const name = err instanceof Error ? err.name : "";
-      if (name === "TimeoutError" || name === "AbortError") {
+    /*
+     * Retrying is safe ONLY for attempts that produced no HTTP response: once
+     * a response exists it may have been billed, so HTTP-level errors are
+     * never retried. A hung-then-dropped attempt may still be billed upstream
+     * without us seeing the cost — rare, fractions of a cent, and better than
+     * a 60-second error page.
+     */
+    let res: Response | null = null;
+    for (let attempt = 1; res === null; attempt++) {
+      try {
+        res = await fetch(url, {
+          method,
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+          body: method === "POST" ? JSON.stringify(payload) : undefined,
+          signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        });
+      } catch (err) {
+        if (attempt < RETRY_ATTEMPTS) continue;
+        const name = err instanceof Error ? err.name : "";
+        if (name === "TimeoutError" || name === "AbortError") {
+          throw new ApiException(
+            "upstream_timeout",
+            `DataForSEO did not respond within ${(ATTEMPT_TIMEOUT_MS * RETRY_ATTEMPTS) / 1000}s across ${RETRY_ATTEMPTS} attempts (${endpoint}).`,
+          );
+        }
+        // The underlying message is not forwarded — it can carry the request
+        // URL and, on some runtimes, request headers.
         throw new ApiException(
-          "upstream_timeout",
-          `DataForSEO did not respond within ${REQUEST_TIMEOUT_MS / 1000}s (${endpoint}).`,
+          "upstream_error",
+          `Could not reach DataForSEO (${endpoint}).`,
         );
       }
-      // The underlying message is not forwarded — it can carry the request URL
-      // and, on some runtimes, request headers.
-      throw new ApiException(
-        "upstream_error",
-        `Could not reach DataForSEO (${endpoint}).`,
-      );
     }
 
     let envelope: DfsEnvelope<TResult>;
