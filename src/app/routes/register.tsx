@@ -1,21 +1,54 @@
-import type { FormEvent } from "react";
-import { Link } from "react-router";
+import { useState, type FormEvent } from "react";
+import { Link, Navigate, useNavigate } from "react-router";
 
 import { AuthCard, Field } from "../components/auth-card";
+import { errorMessage, fieldErrors } from "../lib/api";
+import { useMe, useRegister } from "../lib/session";
 
-/**
- * TODO(auth): form shell only — this screen has no logic.
- *
- * The auth agent owns it. Expected behaviour: POST /api/v1/auth/register with
- * { email, password }, which creates the user, their first workspace and an
- * owner membership in one transaction, then signs them in. Password rules and
- * the PBKDF2 work factor live server-side, not here.
- */
+/** Mirrors `passwordSchema` in src/shared/auth.ts — the server still decides. */
+const MIN_PASSWORD_LENGTH = 10;
+
 export function Register() {
+  const navigate = useNavigate();
+  const me = useMe();
+  const register = useRegister();
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  if (me.data != null) return <Navigate to="/app" replace />;
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    // No network call yet.
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "");
+
+    if (email === "") {
+      setLocalError("Enter your email address.");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setLocalError(
+        `Use at least ${MIN_PASSWORD_LENGTH} characters for your password.`,
+      );
+      return;
+    }
+    setLocalError(null);
+
+    register.mutate(
+      { email, password },
+      { onSuccess: () => void navigate("/app", { replace: true }) },
+    );
   };
+
+  // A 422 names the field that failed; anything else gets the plain message.
+  const fields = fieldErrors(register.error);
+  const serverMessage =
+    register.error === null
+      ? null
+      : (fields.email?.[0] ??
+        fields.password?.[0] ??
+        errorMessage(register.error, "Could not create your account."));
+  const message = localError ?? serverMessage;
 
   return (
     <AuthCard
@@ -30,7 +63,7 @@ export function Register() {
         </>
       }
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <Field id="email" label="Email" type="email" autoComplete="email" />
         <Field
           id="password"
@@ -38,15 +71,26 @@ export function Register() {
           type="password"
           autoComplete="new-password"
         />
+        <p className="text-xs text-muted-foreground">
+          At least {MIN_PASSWORD_LENGTH} characters.
+        </p>
+
+        {message !== null && (
+          <p
+            role="alert"
+            className="rounded-app border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          >
+            {message}
+          </p>
+        )}
+
         <button
           type="submit"
-          className="w-full rounded-app bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+          disabled={register.isPending}
+          className="w-full rounded-app bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
         >
-          Create account
+          {register.isPending ? "Creating account…" : "Create account"}
         </button>
-        <p className="text-xs text-muted-foreground">
-          Not wired up yet — registration lands in Phase 0.
-        </p>
       </form>
     </AuthCard>
   );

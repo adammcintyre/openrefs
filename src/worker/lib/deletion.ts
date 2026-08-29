@@ -1,0 +1,109 @@
+/**
+ * Workspace deletion — the cascade CLAUDE.md calls "a feature".
+ *
+ * Three stores hold tenant data and each is emptied a different way:
+ *   D1  one DELETE on `workspaces`; every other table reaches it by an
+ *       `onDelete: "cascade"` foreign key (see src/db/schema.ts).
+ *   KV  every key under `ws:<id>:`, listed and deleted page by page.
+ *   R2  every object under `ws:<id>/`, likewise.
+ *
+ * Blobs go first and D1 last. If a purge fails halfway the workspace still
+ * exists, so the operation can simply be retried; deleting the row first would
+ * strand KV and R2 data belonging to a tenant that no longer appears anywhere.
+ */
+import { eq } from "drizzle-orm";
+
+import type { Db } from "../../db";
+import { workspaces } from "../../db";
+
+/** KV keys for a workspace. Matches docs/ARCHITECTURE.md. */
+export function workspaceKvPrefix(workspaceId: string): string {
+  return `ws:${workspaceId}:`;
+}
+
+/** R2 keys for a workspace — a slash, not a colon, so paths read naturally. */
+export function workspaceR2Prefix(workspaceId: string): string {
+  return `ws:${workspaceId}/`;
+}
+
+export interface PurgeResult {
+  kvKeys: number;
+  r2Objects: number;
+}
+
+/** Deletes every KV key under the workspace prefix. Returns how many went. */
+export async function purgeWorkspaceKv(
+  kv: KVNamespace,
+  workspaceId: string,
+): Promise<number> {
+  const prefix = workspaceKvPrefix(workspaceId);
+  let cursor: string | undefined;
+  let deleted = 0;
+
+  for (;;) {
+    const page = await kv.list({ prefix, cursor, limit: 1000 });
+    // KV has no bulk delete; the keys in a page are independent, so fan out.
+    await Promise.all(page.keys.map((key) => kv.delete(key.name)));
+    deleted += page.keys.length;
+
+    if (page.list_complete) break;
+    cursor = page.cursor;
+  }
+
+  return deleted;
+}
+
+/** Deletes every R2 object under the workspace prefix. */
+export async function purgeWorkspaceR2(
+  bucket: R2Bucket,
+  workspaceId: string,
+): Promise<number> {
+  const prefix = workspaceR2Prefix(workspaceId);
+  let cursor: string | undefined;
+  let deleted = 0;
+
+  for (;;) {
+    const page = await bucket.list({ prefix, cursor, limit: 1000 });
+    if (page.objects.length > 0) {
+      // R2 takes up to 1000 keys per call, which is exactly one page.
+      await bucket.delete(page.objects.map((object) => object.key));
+      deleted += page.objects.length;
+    }
+
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+
+  return deleted;
+}
+
+export interface DeletionStores {
+  db: Db;
+  kv: KVNamespace;
+  r2: R2Bucket;
+}
+
+/**
+ * Removes a workspace from every store. Callers must have already checked that
+ * the actor is an owner — this function does no authorization of its own, so
+ * that account deletion can reuse it for workspaces the user solely owns.
+ */
+export async function deleteWorkspaceEverywhere(
+  { db, kv, r2 }: DeletionStores,
+  workspaceId: string,
+): Promise<PurgeResult> {
+  const [kvKeys, r2Objects] = await Promise.all([
+    purgeWorkspaceKv(kv, workspaceId),
+    purgeWorkspaceR2(r2, workspaceId),
+  ]);
+
+  // TODO(phase 8, hosted): delete the Stripe customer / cancel the
+  // subscription for this workspace before the row goes.
+  // TODO(phase 5): revoke Google OAuth refresh tokens held in
+  // `gsc_connections` for this workspace's projects — the cascade drops the
+  // rows, but Google keeps the grant alive until it is explicitly revoked.
+
+  await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+
+  return { kvKeys, r2Objects };
+}
