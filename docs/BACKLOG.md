@@ -1,5 +1,7 @@
 # Backlog — small deferred items
 
+- **DataForSEO tarpit windows from Cloudflare egress** (observed repeatedly 2026-08-29): for minutes at a time, DFS hangs requests arriving from Workers IPs — both retry attempts die — while the same calls answer in <1s from residential IPs; then it clears. Client retries can't escape a window. Mitigations to consider: stale-if-error cache serving; a status banner when consecutive timeouts are detected; **Adam should file a DataForSEO support ticket** ("live API requests from Cloudflare Workers egress intermittently hang for minutes; instant from other networks — can our account/source be allowlisted?").
+
 Owned by the orchestrator; phase agents pick these up when a spec says so. Add here rather than losing things in reports.
 
 - **Collections: record market per keyword** — `collection_keywords` has no location/language, so the collection detail view can't offer "View SERP". Needs a small migration (nullable columns, default the workspace's last-used market on add) + UI action. Target: Phase 7 polish.

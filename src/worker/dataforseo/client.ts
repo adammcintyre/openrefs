@@ -435,7 +435,8 @@ export function createDataForSeoClient(
             ATTEMPT_TIMEOUTS_MS.reduce((sum, ms) => sum + ms, 0) / 1000;
           throw new ApiException(
             "upstream_timeout",
-            `DataForSEO did not respond within ${totalSeconds}s across ${ATTEMPT_TIMEOUTS_MS.length} attempts (${endpoint}).`,
+            `DataForSEO didn't respond in time (${totalSeconds}s, ${ATTEMPT_TIMEOUTS_MS.length} attempts). Their API occasionally slows for a few minutes for requests from cloud providers — it usually clears quickly, so try again shortly. Nothing was charged for this request.`,
+            { endpoint },
           );
         }
         // The underlying message is not forwarded — it can carry the request
