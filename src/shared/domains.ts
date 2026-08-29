@@ -183,6 +183,15 @@ export interface DomainCountryRow {
   locationCode: number;
   countryIsoCode: string;
   countryName: string;
+  /**
+   * The language this market was actually queried in — **not necessarily the
+   * one requested**. A DataForSEO location accepts only its own languages
+   * (Germany is `de` only, France `fr` only), so asking for all ten markets in
+   * `en` would fail half of them. Each market falls back to its primary
+   * language, and this field says which was used. Worth showing in the table
+   * when it differs from the page's language.
+   */
+  languageCode: string;
   organic: RankMetrics;
   paid: RankMetrics;
 }

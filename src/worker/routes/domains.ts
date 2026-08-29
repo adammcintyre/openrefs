@@ -48,28 +48,48 @@ const domains = new Hono<AppEnv>();
 domains.use("*", requireSession);
 
 /**
- * The country breakdown's markets.
+ * The country breakdown's markets, with each market's supported languages.
  *
- * These codes were resolved from `dataforseo_labs/locations_and_languages`
- * (the only location list Labs endpoints accept) and are pinned here rather
- * than looked up per request: the breakdown is already ~10 paid calls, and
- * adding an eleventh to re-derive constants that change approximately never
- * would be worse. They follow DataForSEO's convention of ISO 3166-1 numeric
- * + 2000, which is a useful sanity check but not a promise — each one was
- * verified against the live list, not computed.
+ * Codes resolved from `dataforseo_labs/locations_and_languages` — the only
+ * location list Labs endpoints accept — and pinned here rather than looked up
+ * per request: the breakdown is already ~10 paid calls, and adding one more to
+ * re-derive constants that change approximately never would be worse. They
+ * happen to follow DataForSEO's ISO 3166-1 numeric + 2000 convention, but each
+ * was verified against the live list rather than computed from it.
+ *
+ * **`languages` is the load-bearing part.** A Labs location accepts only its
+ * own languages: Germany is `de` only, France `fr` only, Spain `es` only. A
+ * naive fan-out passing the caller's single `language=en` to all ten markets
+ * therefore fails five of them outright — the breakdown would come back half
+ * empty and look like the domain had no presence there. So each market is
+ * queried in the caller's language when it supports it, and in its own primary
+ * language otherwise. The language actually used is reported per row.
  */
 export const COUNTRY_BREAKDOWN_MARKETS = [
-  { locationCode: 2840, countryIsoCode: "US", countryName: "United States" },
-  { locationCode: 2826, countryIsoCode: "GB", countryName: "United Kingdom" },
-  { locationCode: 2276, countryIsoCode: "DE", countryName: "Germany" },
-  { locationCode: 2250, countryIsoCode: "FR", countryName: "France" },
-  { locationCode: 2724, countryIsoCode: "ES", countryName: "Spain" },
-  { locationCode: 2380, countryIsoCode: "IT", countryName: "Italy" },
-  { locationCode: 2036, countryIsoCode: "AU", countryName: "Australia" },
-  { locationCode: 2124, countryIsoCode: "CA", countryName: "Canada" },
-  { locationCode: 2528, countryIsoCode: "NL", countryName: "Netherlands" },
-  { locationCode: 2356, countryIsoCode: "IN", countryName: "India" },
+  { locationCode: 2840, countryIsoCode: "US", countryName: "United States", languages: ["en", "es"] },
+  { locationCode: 2826, countryIsoCode: "GB", countryName: "United Kingdom", languages: ["en"] },
+  { locationCode: 2276, countryIsoCode: "DE", countryName: "Germany", languages: ["de"] },
+  { locationCode: 2250, countryIsoCode: "FR", countryName: "France", languages: ["fr"] },
+  { locationCode: 2724, countryIsoCode: "ES", countryName: "Spain", languages: ["es"] },
+  { locationCode: 2380, countryIsoCode: "IT", countryName: "Italy", languages: ["it"] },
+  { locationCode: 2036, countryIsoCode: "AU", countryName: "Australia", languages: ["en"] },
+  { locationCode: 2124, countryIsoCode: "CA", countryName: "Canada", languages: ["en", "fr"] },
+  { locationCode: 2528, countryIsoCode: "NL", countryName: "Netherlands", languages: ["nl"] },
+  { locationCode: 2356, countryIsoCode: "IN", countryName: "India", languages: ["en", "hi"] },
 ] as const;
+
+/**
+ * The language to query one market in: the caller's if that market supports
+ * it, else the market's own first language.
+ */
+export function marketLanguage(
+  market: { languages: readonly string[] },
+  requested: string,
+): string {
+  const wanted = requested.toLowerCase();
+  if (market.languages.includes(wanted)) return wanted;
+  return market.languages[0] ?? wanted;
+}
 
 const domainQuerySchema = marketQuerySchema.extend({
   domain: domainParam,
@@ -336,13 +356,14 @@ domains.get("/countries", async (c) => {
 
   const settled = await Promise.allSettled(
     COUNTRY_BREAKDOWN_MARKETS.map(async (market) => {
+      const languageCode = marketLanguage(market, query.language);
       const result = await dfs.labs.googleDomainRankOverviewLive({
         target: query.domain,
         locationCode: market.locationCode,
-        languageCode: query.language,
+        languageCode,
         fresh: query.fresh,
       });
-      return { market, result };
+      return { market, result, languageCode };
     }),
   );
 
@@ -360,13 +381,15 @@ domains.get("/countries", async (c) => {
       continue;
     }
 
-    const { result } = outcome.value;
+    const { result, languageCode } = outcome.value;
     costUsd += result.costUsd;
     allCached &&= result.cached;
     items.push({
       locationCode: market.locationCode,
       countryIsoCode: market.countryIsoCode,
       countryName: market.countryName,
+      // Not necessarily the requested language — see COUNTRY_BREAKDOWN_MARKETS.
+      languageCode,
       organic: toRankMetrics(result.organic),
       paid: toRankMetrics(result.paid),
     });
