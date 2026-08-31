@@ -82,7 +82,9 @@ export function AppSidebar({
           collapsed ? "justify-center px-2" : "px-4",
         )}
       >
-        <Link to="/" aria-label="OpenRefs home" className="flex items-center">
+        {/* Inside the app the logo goes to the dashboard, not the marketing
+            page — signed-in users clicking it want home base, not the pitch. */}
+        <Link to="/app" aria-label="OpenRefs dashboard" className="flex items-center">
           {collapsed ? (
             <Logomark size={24} />
           ) : (

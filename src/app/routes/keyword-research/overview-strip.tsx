@@ -112,6 +112,20 @@ export function KeywordOverviewStrip({
   // A chart of twelve nulls is worse than no chart: it implies zero traffic.
   const hasHistory = chartData.some((point) => point.volume !== null);
 
+  /*
+   * Volume, CPC and difficulty all null together is Google's ads data
+   * declining the keyword, not a thin result: adult and otherwise-restricted
+   * terms are excluded from Ads data at the source (verified live — e.g.
+   * "vibrators" answers in ~2s with every metric null). Saying so matters,
+   * because the generic wording reads like an outage on a keyword the user
+   * knows is huge.
+   */
+  const adsDataDeclined =
+    data !== undefined &&
+    data.searchVolume === null &&
+    data.cpc === null &&
+    data.keywordDifficulty === null;
+
   return (
     <section className="flex flex-col gap-4" aria-label="Keyword overview">
       <div className="flex flex-wrap items-center gap-2">
@@ -197,8 +211,13 @@ export function KeywordOverviewStrip({
             />
           ) : (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              DataForSEO reported no monthly history for this keyword in this
-              market.
+              {adsDataDeclined
+                ? "Google's ads data excludes this keyword — adult and other " +
+                  "restricted terms carry no volume, CPC or difficulty at the " +
+                  "source, however popular they are. Suggestions and the SERP " +
+                  "still work for it."
+                : "DataForSEO reported no monthly history for this keyword " +
+                  "in this market."}
             </p>
           )}
         </CardContent>
