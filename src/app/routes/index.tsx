@@ -7,6 +7,7 @@ import { useMe } from "../lib/session";
 import { AiVisibilityModule } from "./ai-visibility/module";
 import { AppLayout } from "./app-layout";
 import { BacklinksModule } from "./backlinks/module";
+import { ContentDiscoveryModule } from "./content-discovery/module";
 import { SearchConsoleModule } from "./search-console/module";
 import { DomainOverviewModule } from "./domain-overview/module";
 import { GapAnalysisModule } from "./gap-analysis/module";
@@ -39,6 +40,7 @@ const MODULE_SEGMENTS = new Set([
   "domain-overview",
   "backlinks",
   "gap-analysis",
+  "content-discovery",
   "rank-tracking",
   "site-audit",
   "search-console",
@@ -120,6 +122,10 @@ export function AppRoutes() {
           <Route path="domain-overview/*" element={<DomainOverviewModule />} />
           <Route path="backlinks/*" element={<BacklinksModule />} />
           <Route path="gap-analysis/*" element={<GapAnalysisModule />} />
+          <Route
+            path="content-discovery/*"
+            element={<ContentDiscoveryModule />}
+          />
           <Route path="rank-tracking/*" element={<RankTrackingModule />} />
           <Route path="site-audit/*" element={<SiteAuditModule />} />
           <Route path="search-console/*" element={<SearchConsoleModule />} />

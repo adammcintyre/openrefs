@@ -106,7 +106,7 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           "Topic search enriched with traffic estimates and referring domains, filtered for low competition.",
         phase: 7,
-        live: false,
+        live: true,
         icon: Compass,
       },
     ],
