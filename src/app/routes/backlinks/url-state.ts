@@ -13,17 +13,17 @@
  *    code. There is no market to carry, so none is carried.
  *  - **`target` may be a URL.** See `components/backlinks/target.ts`.
  *
- * `mode` and `range` ride along in the URL because they are part of the report's
- * identity rather than transient UI: "one link per domain, last six months" is
- * what someone means when they send the link. Filters deliberately do not —
- * they are server-side and therefore billed, and an Apply button is the right
- * gate for a purchase.
+ * `mode`, `sort` and `range` ride along in the URL because they are part of the
+ * report's identity rather than transient UI: "one link per domain, strongest
+ * first, last six months" is what someone means when they send the link.
+ * Filters deliberately do not — they are server-side and therefore billed, and
+ * an Apply button is the right gate for a purchase.
  *
  * Reading is total: any garbage resolves to a usable state rather than an error
  * one, so a hand-edited `?tab=banana` cannot strand the page.
  */
-import type { BacklinksListMode } from "../../../shared/backlinks";
-import { BACKLINKS_LIST_MODES } from "../../../shared/backlinks";
+import type { BacklinkSort, BacklinksListMode } from "../../../shared/backlinks";
+import { BACKLINKS_LIST_MODES, BACKLINK_SORTS } from "../../../shared/backlinks";
 import {
   isLikelyTarget,
   normalizeTarget,
@@ -46,12 +46,23 @@ export const DEFAULT_TAB: BacklinkTabId = "backlinks";
  */
 export const DEFAULT_MODE: BacklinksListMode = "one_per_domain";
 
+/**
+ * Strongest linking domains first.
+ *
+ * The same order the module shipped with when the sort was fixed, so the
+ * default view of every existing bookmark is unchanged — and the right default
+ * regardless: the first question of a link profile is "who important links to
+ * me", not "what came in most recently".
+ */
+export const DEFAULT_SORT: BacklinkSort = "domain_score";
+
 /** Everything the query string carries. */
 export interface BacklinksSearch {
   /** Normalised domain or URL, or "" when nothing has been searched yet. */
   target: string;
   tab: BacklinkTabId;
   mode: BacklinksListMode;
+  sort: BacklinkSort;
   range: HistoryRange;
 }
 
@@ -67,6 +78,12 @@ function readMode(raw: string | null): BacklinksListMode {
     : DEFAULT_MODE;
 }
 
+function readSort(raw: string | null): BacklinkSort {
+  return BACKLINK_SORTS.includes(raw as BacklinkSort)
+    ? (raw as BacklinkSort)
+    : DEFAULT_SORT;
+}
+
 function readRange(raw: string | null): HistoryRange {
   return HISTORY_RANGES.includes(raw as HistoryRange)
     ? (raw as HistoryRange)
@@ -79,6 +96,7 @@ export function readBacklinksSearch(params: URLSearchParams): BacklinksSearch {
     target: normalizeTarget(params.get("target") ?? ""),
     tab: readTab(params.get("tab")),
     mode: readMode(params.get("mode")),
+    sort: readSort(params.get("sort")),
     range: readRange(params.get("range")),
   };
 }
@@ -100,6 +118,7 @@ export function backlinksSearchParams(
   params.set("target", target);
   if (search.tab !== DEFAULT_TAB) params.set("tab", search.tab);
   if (search.mode !== DEFAULT_MODE) params.set("mode", search.mode);
+  if (search.sort !== DEFAULT_SORT) params.set("sort", search.sort);
   if (search.range !== DEFAULT_RANGE) params.set("range", search.range);
   return params;
 }

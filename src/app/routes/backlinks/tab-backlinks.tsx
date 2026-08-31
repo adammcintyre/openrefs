@@ -12,12 +12,30 @@
  * the provider returns `group_count: 0` for every row — documented behaviour,
  * not missing data — and a column of zeroes reads as a claim rather than as an
  * absence.
+ *
+ * **Sort is a purchase too.** It becomes the provider's `order_by`, so picking
+ * "Newest" is a new query over the whole index rather than a reshuffle of the
+ * fifty rows on screen. The note under the control says so, for the same reason
+ * the mode toggle's does.
  */
 import { Link2Off } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { BacklinkRow, BacklinksListMode } from "../../../shared/backlinks";
-import { DofollowBadge, ScoreBadge } from "../../components/backlinks/badges";
+import type {
+  BacklinkRow,
+  BacklinkSort,
+  BacklinksListMode,
+} from "../../../shared/backlinks";
+import {
+  BACKLINKS_SPAM_HIDE_THRESHOLD,
+  BACKLINK_SORTS,
+} from "../../../shared/backlinks";
+import {
+  DofollowBadge,
+  LinkTypeBadge,
+  ScoreBadge,
+  SpamBadge,
+} from "../../components/backlinks/badges";
 import {
   formatAnchor,
   formatSeen,
@@ -35,6 +53,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Select,
   cn,
   createDataTableColumns,
 } from "../../components/ui";
@@ -66,6 +85,21 @@ const MODES: Array<{ value: BacklinksListMode; label: string; hint: string }> = 
     hint: "Every individual link, including repeats from the same site.",
   },
 ];
+
+/**
+ * The sort orders, in the order they are offered.
+ *
+ * Authority first because that is the question this screen is for; the two
+ * date orders last because "what came in this week" is a follow-up, not an
+ * opening move. Every label is our vocabulary — Domain Score and Page Score,
+ * never the provider's raw rank or anyone else's trademarked metric.
+ */
+const SORT_LABELS: Record<BacklinkSort, string> = {
+  domain_score: "Domain Score",
+  page_score: "Page Score",
+  newest: "Newest",
+  oldest: "Oldest",
+};
 
 /**
  * The linking page, over two lines: the domain is what you scan for, the path
@@ -106,6 +140,8 @@ export function BacklinksTab({
   target,
   mode,
   onModeChange,
+  sort,
+  onSortChange,
   filters,
   onFiltersChange,
 }: {
@@ -113,6 +149,8 @@ export function BacklinksTab({
   target: string;
   mode: BacklinksListMode;
   onModeChange: (mode: BacklinksListMode) => void;
+  sort: BacklinkSort;
+  onSortChange: (sort: BacklinkSort) => void;
   filters: LinkFilters;
   onFiltersChange: (filters: LinkFilters) => void;
 }) {
@@ -123,6 +161,7 @@ export function BacklinksTab({
   const query = useBacklinksList(workspaceId, target, {
     mode,
     filters,
+    sort,
     enabled: true,
   });
 
@@ -212,6 +251,23 @@ export function BacklinksTab({
         sortFn: "alphanumeric",
         cell: (info) => <DofollowBadge dofollow={info.getValue()} />,
       }),
+      /*
+       * Spam and Type are narrow on purpose: two glyph-width columns that make
+       * a profile scannable without pushing the anchor and the source — the
+       * columns people actually read across — off the edge.
+       */
+      col.accessor((row) => row.spamScore, {
+        id: "spamScore",
+        header: "Spam",
+        sortFn: "alphanumeric",
+        cell: (info) => <SpamBadge score={info.getValue()} />,
+      }),
+      col.accessor((row) => row.itemType, {
+        id: "itemType",
+        header: "Type",
+        sortFn: "text",
+        cell: (info) => <LinkTypeBadge itemType={info.getValue()} />,
+      }),
       col.accessor((row) => row.firstSeen, {
         id: "firstSeen",
         header: "First seen",
@@ -294,9 +350,27 @@ export function BacklinksTab({
                 </button>
               ))}
             </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-foreground">
+              Sort by
+              <Select
+                value={sort}
+                aria-label="Sort backlinks by"
+                onChange={(event) =>
+                  onSortChange(event.target.value as BacklinkSort)
+                }
+                className="h-8 w-40 text-xs"
+              >
+                {BACKLINK_SORTS.map((option) => (
+                  <option key={option} value={option}>
+                    {SORT_LABELS[option]}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
             <p className="text-xs text-muted-foreground">
-              Grouping happens at DataForSEO — the first switch each way fetches
-              fresh data and bills a call.
+              Grouping and sorting both happen at DataForSEO — the first switch
+              each way fetches fresh data and bills a call.
             </p>
           </div>
 
@@ -346,17 +420,38 @@ export function BacklinksTab({
                   />
                 )}
               </Field>
-              <label className="flex items-center gap-2 pt-1 text-sm text-foreground sm:pt-7">
-                <input
-                  type="checkbox"
-                  checked={draft.dofollowOnly}
-                  onChange={(event) =>
-                    setDraft({ ...draft, dofollowOnly: event.target.checked })
-                  }
-                  className="size-4 rounded-sm border-border accent-primary"
-                />
-                Dofollow links only
-              </label>
+              <div className="flex flex-col gap-2 pt-1 sm:pt-7">
+                <label className="flex items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={draft.dofollowOnly}
+                    onChange={(event) =>
+                      setDraft({ ...draft, dofollowOnly: event.target.checked })
+                    }
+                    className="size-4 rounded-sm border-border accent-primary"
+                  />
+                  Dofollow links only
+                </label>
+                {/*
+                  A fixed ceiling rather than a number box: the useful question
+                  is "drop the obvious junk", and a free-text threshold would
+                  fork the server cache once per value anyone typed.
+                */}
+                <label
+                  className="flex items-center gap-2 text-sm text-foreground"
+                  title={`Excludes links DataForSEO scores above ${BACKLINKS_SPAM_HIDE_THRESHOLD} for spam — the bulk-comment and link-farm tier. Ordinary directories and forums stay.`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={draft.hideSpam}
+                    onChange={(event) =>
+                      setDraft({ ...draft, hideSpam: event.target.checked })
+                    }
+                    className="size-4 rounded-sm border-border accent-primary"
+                  />
+                  Hide likely spam
+                </label>
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -400,7 +495,7 @@ export function BacklinksTab({
             title="No backlinks found"
             description={
               filterCount > 0
-                ? "No links matched these filters. Try lowering the minimum Domain Score or clearing the anchor text."
+                ? "No links matched these filters. Try lowering the minimum Domain Score, turning off Hide likely spam, or clearing the anchor text."
                 : "DataForSEO has no links on record pointing at this target."
             }
           />

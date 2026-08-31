@@ -207,22 +207,25 @@ export function GapAnalysisPage() {
   );
   const refresh = useRefreshGap(activeWorkspaceId, search, filters);
   const locationsQuery = useMetaLocations(activeWorkspaceId);
-  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "gap");
-
   useApiErrorToast(query.error, "Gap analysis failed");
 
   /*
    * A comparison that came back is one the Worker has recorded, so the trail is
-   * an entry out of date. Invalidating is a free D1 read; the guard keeps a
-   * re-render from re-firing it.
+   * an entry out of date. Invalidating it is a free D1 read.
+   *
+   * The handle goes through a ref because `useInvalidateHistory` returns a
+   * fresh closure on every render: listed as a dependency it would re-run this
+   * effect on every render, and the timestamp is the real trigger anyway.
    */
+  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "gap");
+  const invalidateHistoryRef = useRef(invalidateHistory);
+  invalidateHistoryRef.current = invalidateHistory;
+
   const gapUpdatedAt = query.isSuccess ? query.dataUpdatedAt : 0;
-  const invalidatedAt = useRef(0);
   useEffect(() => {
-    if (gapUpdatedAt === 0 || invalidatedAt.current === gapUpdatedAt) return;
-    invalidatedAt.current = gapUpdatedAt;
-    invalidateHistory();
-  }, [gapUpdatedAt, invalidateHistory]);
+    if (gapUpdatedAt === 0) return;
+    invalidateHistoryRef.current();
+  }, [gapUpdatedAt]);
 
   const rows = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],

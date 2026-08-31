@@ -14,13 +14,21 @@
  *    links. "Dofollow only, off" means no filter at all, so the key is omitted.
  *  - **A minimum score of 0 is dropped.** `>= 0` matches every link ever
  *    crawled; sending it buys nothing and splits the cache in two.
+ *  - **"Hide likely spam" is a ceiling, not a boolean.** It sends one fixed
+ *    `maxSpamScore` (`BACKLINKS_SPAM_HIDE_THRESHOLD`) so the toggle has exactly
+ *    two cache entries rather than one per value someone might type. Off sends
+ *    nothing at all, because `maxSpamScore=100` would still exclude the links
+ *    the provider scores above 100's worth of nothing and would fork the cache
+ *    for no gain.
  */
+import { BACKLINKS_SPAM_HIDE_THRESHOLD } from "../../../shared/backlinks";
 
 /** What the inputs hold. Strings, because that is what an `<input>` gives you. */
 export interface LinkFilterDraft {
   dofollowOnly: boolean;
   minDomainScore: string;
   anchor: string;
+  hideSpam: boolean;
 }
 
 /** What the API takes. Keys absent when not filtering. */
@@ -31,12 +39,18 @@ export interface LinkFilters {
   minDomainScore?: number;
   /** Substring the anchor text must contain. */
   anchor?: string;
+  /**
+   * 0–100 ceiling on the provider's spam score. Only ever
+   * `BACKLINKS_SPAM_HIDE_THRESHOLD` — see the file header.
+   */
+  maxSpamScore?: number;
 }
 
 export const EMPTY_LINK_DRAFT: LinkFilterDraft = {
   dofollowOnly: false,
   minDomainScore: "",
   anchor: "",
+  hideSpam: false,
 };
 
 export const EMPTY_LINK_FILTERS: LinkFilters = {};
@@ -65,6 +79,8 @@ export function parseLinkFilterDraft(draft: LinkFilterDraft): LinkFilters {
   const anchor = draft.anchor.trim();
   if (anchor !== "") filters.anchor = anchor;
 
+  if (draft.hideSpam) filters.maxSpamScore = BACKLINKS_SPAM_HIDE_THRESHOLD;
+
   return filters;
 }
 
@@ -75,6 +91,7 @@ export function toLinkFilterDraft(filters: LinkFilters): LinkFilterDraft {
     minDomainScore:
       filters.minDomainScore === undefined ? "" : String(filters.minDomainScore),
     anchor: filters.anchor ?? "",
+    hideSpam: filters.maxSpamScore !== undefined,
   };
 }
 
@@ -87,6 +104,7 @@ export function activeLinkFilterCount(filters: LinkFilters): number {
 export function isLinkDraftEmpty(draft: LinkFilterDraft): boolean {
   return (
     !draft.dofollowOnly &&
+    !draft.hideSpam &&
     draft.minDomainScore.trim() === "" &&
     draft.anchor.trim() === ""
   );

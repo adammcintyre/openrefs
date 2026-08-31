@@ -114,22 +114,23 @@ export function DomainOverviewPage() {
   );
   const locationsQuery = useMetaLocations(activeWorkspaceId);
   const blocked = blockingError(overview.error);
-  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "domains");
-
   /*
    * A search that came back is a search the Worker has recorded, so the trail
-   * is now one entry out of date. Invalidating is a free D1 read; keyed on the
-   * timestamp of the last successful fetch so a re-render cannot re-fire it.
+   * is now one entry out of date. Invalidating it is a free D1 read.
+   *
+   * The handle goes through a ref because `useInvalidateHistory` returns a
+   * fresh closure on every render: listed as a dependency it would re-run this
+   * effect on every render, and the timestamp is the real trigger anyway.
    */
+  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "domains");
+  const invalidateHistoryRef = useRef(invalidateHistory);
+  invalidateHistoryRef.current = invalidateHistory;
+
   const overviewUpdatedAt = overview.isSuccess ? overview.dataUpdatedAt : 0;
-  const invalidatedAt = useRef(0);
   useEffect(() => {
-    if (overviewUpdatedAt === 0 || invalidatedAt.current === overviewUpdatedAt) {
-      return;
-    }
-    invalidatedAt.current = overviewUpdatedAt;
-    invalidateHistory();
-  }, [overviewUpdatedAt, invalidateHistory]);
+    if (overviewUpdatedAt === 0) return;
+    invalidateHistoryRef.current();
+  }, [overviewUpdatedAt]);
 
   // Unexpected failures also get a toast: the inline notice may be below the
   // fold when the failure lands on a tab the user just switched away from.

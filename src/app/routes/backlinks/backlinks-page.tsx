@@ -16,7 +16,7 @@ import { Link2, SearchX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import type { BacklinksListMode } from "../../../shared/backlinks";
+import type { BacklinkSort, BacklinksListMode } from "../../../shared/backlinks";
 import { targetKind } from "../../components/backlinks/target";
 import { ApiErrorNotice } from "../../components/domains/api-error-notice";
 import {
@@ -100,11 +100,18 @@ export function BacklinksPage() {
   );
 
   /**
-   * Tab, mode and range flicks all `replace`: none of them is a navigation step
-   * anyone wants to unwind one press at a time on the way back.
+   * Tab, mode, sort and range flicks all `replace`: none of them is a
+   * navigation step anyone wants to unwind one press at a time on the way back.
    */
   const patchSearch = useCallback(
-    (patch: Partial<{ tab: BacklinkTabId; mode: BacklinksListMode; range: HistoryRange }>) => {
+    (
+      patch: Partial<{
+        tab: BacklinkTabId;
+        mode: BacklinksListMode;
+        sort: BacklinkSort;
+        range: HistoryRange;
+      }>,
+    ) => {
       setParams(backlinksSearchParams({ ...search, ...patch }), {
         replace: true,
       });
@@ -132,6 +139,8 @@ export function BacklinksPage() {
           target={search.target}
           mode={search.mode}
           onModeChange={(mode) => patchSearch({ mode })}
+          sort={search.sort}
+          onSortChange={(sort) => patchSearch({ sort })}
           filters={filters}
           onFiltersChange={setFilters}
         />
