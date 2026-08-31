@@ -160,6 +160,33 @@ export interface WrappedMeta {
    * mean the same thing, and callers must treat it as `stale ?? false`.
    */
   stale?: boolean;
+  /**
+   * When the payload came off the wire, **epoch ms** — the client's
+   * `DataForSeoResponse.fetchedAt`, which on a cache hit is the entry's
+   * `cachedAt` rather than now.
+   *
+   * Named `…Ms` rather than `fetchedAt` on purpose: the SERP wrapper already
+   * has a `fetchedAt`, and it means something else — the provider's own crawl
+   * timestamp, an ISO string it may omit. Two different facts with one name
+   * would be a trap for exactly the code that has to choose between them.
+   * Services turn this into `ResultMeta.fetchedAt` with `fetchedAtIso`.
+   *
+   * Optional so a wrapper that has not been threaded still type-checks.
+   */
+  fetchedAtMs?: number;
+}
+
+/**
+ * A wrapper's `fetchedAtMs` as the ISO string `ResultMeta.fetchedAt` carries.
+ *
+ * Null rather than a guess when the wrapper did not report one: "we do not know
+ * when this was fetched" is a different claim from "it was fetched just now",
+ * and the UI renders the first as no chip at all.
+ */
+export function fetchedAtIso(meta: WrappedMeta): string | null {
+  const ms = meta.fetchedAtMs;
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
 /* -------------------------------------------------------------------------- */

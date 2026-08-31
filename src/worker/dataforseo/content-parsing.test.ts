@@ -37,6 +37,7 @@ function fakeClient(result: unknown): {
         costUsd: CONTENT_PARSING_PRICE_PER_URL_USD,
         cached: false,
         stale: false,
+        fetchedAt: Date.now(),
         statusCode: 20000,
         statusMessage: "Ok.",
       };

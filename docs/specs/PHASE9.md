@@ -54,8 +54,11 @@ build in parallel.
 
 ## Invariants
 
-- A history click or reopened research tab never bills; only an explicit
-  search, Load more, or Refresh does.
+- A history click or reopened research tab never bills **while the cached
+  answer still exists** — that is, within the 90-day `CACHE_MAX_AGE_MS` hard
+  cap. Past it there is nothing left to reopen: the entry is deleted on read
+  and the search is bought again like a new one. Inside the cap, only an
+  explicit search, Load more, or Refresh bills.
 - Recording history must never fail or slow a search response (waitUntil).
 - New table rides the workspace deletion cascade; no new KV/R2 key families.
 - Trademark vocabulary unchanged (Domain Score / Page Score, etc.).

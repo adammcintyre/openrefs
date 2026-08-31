@@ -143,6 +143,7 @@ export function createMetaApi(client: DataForSeoClient): MetaApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -170,6 +171,7 @@ export function createMetaApi(client: DataForSeoClient): MetaApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
   };

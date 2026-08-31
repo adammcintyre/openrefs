@@ -1169,6 +1169,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1216,6 +1217,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1266,6 +1268,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1315,6 +1318,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1354,6 +1358,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1388,6 +1393,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1439,6 +1445,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1481,6 +1488,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1519,6 +1527,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1568,6 +1577,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1617,6 +1627,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1672,6 +1683,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1732,6 +1744,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -1781,6 +1794,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
   };

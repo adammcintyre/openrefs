@@ -663,6 +663,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -714,6 +715,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -787,6 +789,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -827,6 +830,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
   };
@@ -842,6 +846,7 @@ async function requestReferring(
   costUsd: number;
   cached: boolean;
   stale: boolean;
+  fetchedAtMs: number;
 }> {
   const {
     target,
@@ -883,6 +888,7 @@ async function requestReferring(
     costUsd: response.costUsd,
     cached: response.cached,
     stale: response.stale,
+    fetchedAtMs: response.fetchedAt,
   };
 }
 

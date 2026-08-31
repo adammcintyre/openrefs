@@ -328,6 +328,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
           costUsd: response.costUsd,
           cached: response.cached,
           stale: response.stale,
+          fetchedAtMs: response.fetchedAt,
         },
       );
     },
@@ -405,6 +406,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -437,6 +439,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -487,6 +490,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
           costUsd: response.costUsd,
           cached: response.cached,
           stale: response.stale,
+          fetchedAtMs: response.fetchedAt,
         }),
       };
     },
@@ -541,6 +545,7 @@ function toOrganicSerpResult(
     costUsd: meta.costUsd,
     cached: meta.cached,
     stale: meta.stale,
+    fetchedAtMs: meta.fetchedAtMs,
   };
 }
 
