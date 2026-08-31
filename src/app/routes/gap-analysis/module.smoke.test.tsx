@@ -24,6 +24,8 @@ import type {
   GapKeywordsResponse,
   GapPagesResponse,
 } from "../../../shared/gap";
+import type { HistoryListResponse } from "../../../shared/history";
+import { HISTORY_DEFAULT_LIMIT } from "../../../shared/history";
 import type { MetaLocationsResponse } from "../../../shared/keywords";
 import type { Workspace } from "../../../shared/workspaces";
 import { ToastProvider } from "../../components/ui/toast";
@@ -123,8 +125,30 @@ function gapResponse(mode: GapKeywordsResponse["mode"]): GapKeywordsResponse {
     offset: 0,
     costUsd: 0.024_6,
     cached: false,
+    fetchedAt: new Date(Date.now() - 4 * 3_600_000).toISOString(),
   };
 }
+
+/** The search trail. A three-rival comparison — the row's own headline. */
+const HISTORY: HistoryListResponse = {
+  items: [
+    {
+      id: "h-1",
+      module: "gap",
+      params: {
+        target: "hikelist.com",
+        competitors: ["alltrails.com", "komoot.com", "outdooractive.com"],
+        location: 2826,
+        language: "en",
+      },
+      summary: { keywordCount: 412, competitorCount: 3 },
+      hitCount: 1,
+      firstSearchedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+      lastSearchedAt: new Date(Date.now() - 86_400_000).toISOString(),
+    },
+  ],
+  total: 1,
+};
 
 /**
  * A page where the mode filter dropped everything — captured from the live API,
@@ -212,6 +236,10 @@ function seededClient(
   client.setQueryData(
     ["gap", "pages", WORKSPACE_ID, PAGES.join(","), 2826, "en"],
     { pages: [PAGES_RESPONSE], pageParams: [0] },
+  );
+  client.setQueryData(
+    ["history", "list", WORKSPACE_ID, "gap", HISTORY_DEFAULT_LIMIT],
+    HISTORY,
   );
 
   for (const [key, value] of overrides) client.setQueryData(key, value);
@@ -442,5 +470,63 @@ describe("an empty Missing result", () => {
     expect(render(`${COMPARISON}&mode=weak`)).not.toContain(
       "Show Untapped instead",
     );
+  });
+});
+
+describe("the search trail", () => {
+  it("lists past comparisons on an empty screen", () => {
+    const html = render("/app/gap-analysis");
+    expect(html).toContain("Recent comparisons");
+    // The row's headline: who against how many, and how big the answer was.
+    expect(html).toContain("hikelist.com vs 3 competitors");
+    expect(html).toContain("412 keywords compared");
+    expect(html).toContain("1 day ago");
+  });
+
+  it("says out loud that re-opening one is free", () => {
+    const html = render("/app/gap-analysis");
+    expect(html).toContain("Re-opening a search serves the cached result");
+    expect(html).toContain("Clear all");
+    expect(html).toContain("Remove hikelist.com vs 3 competitors from history");
+  });
+
+  it("folds itself away once a comparison is on screen", () => {
+    const html = render(COMPARISON);
+    expect(html).toContain("<summary");
+    expect(html).toContain("1 recent");
+    expect(html).not.toContain("Gap analyses this workspace has run");
+  });
+});
+
+describe("freshness", () => {
+  const html = render(COMPARISON);
+
+  it("says how old the comparison is", () => {
+    expect(html).toContain("Updated 4 hours ago");
+  });
+
+  it("offers exactly one way to spend on a re-run", () => {
+    expect(html).toContain("Refresh");
+    expect(html).toContain("one call per competitor. This spends credits.");
+  });
+
+  it("does not cry stale over an ordinary result", () => {
+    expect(html).not.toContain("may be outdated");
+  });
+
+  /** The `stale` path: a cached copy served past its normal lifetime. */
+  it("warns when the result came back stale", () => {
+    const stale = render(COMPARISON, [
+      [
+        gapKeywordsKey("missing"),
+        {
+          pages: [
+            { ...gapResponse("missing"), cached: true, costUsd: 0, stale: true },
+          ],
+          pageParams: [0],
+        },
+      ],
+    ]);
+    expect(stale).toContain("cached · may be outdated");
   });
 });

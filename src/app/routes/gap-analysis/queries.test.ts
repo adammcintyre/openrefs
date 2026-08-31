@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { gapExportUrl, gapQueryParams, nextGapOffset } from "./queries";
+import {
+  gapExportUrl,
+  gapFreshParams,
+  gapQueryParams,
+  nextGapOffset,
+} from "./queries";
 import type { GapSearch } from "./url-state";
 
 const SEARCH: GapSearch = {
@@ -75,6 +80,54 @@ describe("gapQueryParams", () => {
     expect(params.get("exclude")).toBe("free");
     expect(params.get("maxVolume")).toBeNull();
     expect(params.get("include")).toBeNull();
+  });
+});
+
+/**
+ * The billing invariants behind the search trail. A history click must cost
+ * nothing, and only a Refresh press may spend — which comes down to which
+ * builder can emit which parameter.
+ */
+describe("cache mode", () => {
+  it("asks for nothing special in the ordinary case", () => {
+    const params = gapQueryParams("ws-1", SEARCH, {}, "auto");
+    expect(params.get("stale")).toBeNull();
+    expect(params.get("fresh")).toBeNull();
+  });
+
+  it("asks for the cached copy when re-opened from history", () => {
+    expect(gapQueryParams("ws-1", SEARCH, {}, "stale").get("stale")).toBe("true");
+  });
+
+  it("can never produce a billed request, whatever the mode", () => {
+    for (const mode of ["auto", "stale"] as const) {
+      expect(gapQueryParams("ws-1", SEARCH, {}, mode).get("fresh")).toBeNull();
+    }
+  });
+
+  it("bills only from the refresh builder, and never asks for both", () => {
+    const params = gapFreshParams("ws-1", SEARCH, { minVolume: 100 });
+    expect(params.get("fresh")).toBe("true");
+    expect(params.get("stale")).toBeNull();
+    // Still the same comparison, with the filters that were on screen.
+    expect(params.get("competitors")).toBe("templatesbooth.com,hikelist.com");
+    expect(params.get("minVolume")).toBe("100");
+  });
+
+  /**
+   * One page, not every page the user had loaded: paging is one upstream call
+   * per competitor *per page*, so re-buying five of them from one click would
+   * be five times the bill anyone expected.
+   */
+  it("refreshes page one only", () => {
+    const params = gapFreshParams("ws-1", SEARCH, {});
+    expect(params.get("offset")).toBe("0");
+    expect(params.get("limit")).toBe("50");
+  });
+
+  /** A CSV is a fresh server-side render, not a re-read of the screen. */
+  it("keeps the export out of it", () => {
+    expect(gapExportUrl("ws-1", SEARCH, {})).not.toContain("stale");
   });
 });
 

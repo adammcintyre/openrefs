@@ -29,6 +29,8 @@ import type {
   PositionBuckets,
   RankMetrics,
 } from "../../../shared/domains";
+import type { HistoryListResponse } from "../../../shared/history";
+import { HISTORY_DEFAULT_LIMIT } from "../../../shared/history";
 import type { MetaLocationsResponse } from "../../../shared/keywords";
 import type { Workspace } from "../../../shared/workspaces";
 import { ToastProvider } from "../../components/ui/toast";
@@ -102,6 +104,31 @@ const OVERVIEW: DomainOverviewResponse = {
   paid: metrics(0, 0, 0),
   costUsd: 0.012_12,
   cached: false,
+  fetchedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+};
+
+/**
+ * The search trail. One entry with a full summary — which is the row worth
+ * pinning, because the metrics on it are the whole reason the list beats
+ * re-running the search.
+ */
+const HISTORY: HistoryListResponse = {
+  items: [
+    {
+      id: "h-1",
+      module: "domains",
+      params: { target: "hikelist.com", location: 2826, language: "en" },
+      summary: {
+        domainScore: 41,
+        organicTraffic: 12_400.6,
+        organicKeywords: 3120,
+      },
+      hitCount: 2,
+      firstSearchedAt: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+      lastSearchedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    },
+  ],
+  total: 1,
 };
 
 const KEYWORDS: DomainKeywordsResponse = {
@@ -167,6 +194,10 @@ function seededClient(): QueryClient {
   });
   client.setQueryData(["workspaces"], WORKSPACES);
   client.setQueryData(["meta", "locations", WORKSPACE_ID], LOCATIONS);
+  client.setQueryData(
+    ["history", "list", WORKSPACE_ID, "domains", HISTORY_DEFAULT_LIMIT],
+    HISTORY,
+  );
   client.setQueryData(
     ["domains", "overview", WORKSPACE_ID, TARGET, 2826, "en"],
     OVERVIEW,
@@ -298,5 +329,56 @@ describe("Countries", () => {
     );
     expect(html).toContain("Analyze countries · ≈ $0.10");
     expect(html).toContain("ten major markets");
+  });
+});
+
+describe("the search trail", () => {
+  it("lists past domains with their metrics on an empty screen", () => {
+    const html = render("/app/domain-overview");
+    expect(html).toContain("Recent domains");
+    expect(html).toContain("hikelist.com");
+    // The Domain Score badge, and the compact metrics beside it.
+    expect(html).toContain("41");
+    expect(html).toContain("12,401 traffic");
+    expect(html).toContain("3,120 keywords");
+    expect(html).toContain("2 hours ago");
+  });
+
+  it("says out loud that re-opening one is free", () => {
+    const html = render("/app/domain-overview");
+    expect(html).toContain("costs nothing");
+    expect(html).toContain("Clear all");
+    // Every row can be dropped on its own, not only as a whole list.
+    expect(html).toContain("Remove hikelist.com from history");
+  });
+
+  it("folds itself away once a report is on screen", () => {
+    const html = render(
+      `/app/domain-overview?target=${TARGET}&location=2826&language=en`,
+    );
+    // The disclosure, not the card: the report is the content now.
+    expect(html).toContain("<summary");
+    expect(html).toContain("1 recent");
+    expect(html).not.toContain("Searches this workspace has run");
+  });
+});
+
+describe("freshness", () => {
+  const html = render(
+    `/app/domain-overview?target=${TARGET}&location=2826&language=en`,
+  );
+
+  it("says how old the figures are", () => {
+    expect(html).toContain("Updated 3 days ago");
+  });
+
+  it("offers exactly one way to spend on a re-read", () => {
+    expect(html).toContain("Refresh");
+    expect(html).toContain("This spends credits.");
+  });
+
+  /** `stale` is unset on this fixture, so the warning must not appear. */
+  it("does not cry stale over an ordinary result", () => {
+    expect(html).not.toContain("may be outdated");
   });
 });

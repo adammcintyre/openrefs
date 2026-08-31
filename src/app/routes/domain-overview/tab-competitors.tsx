@@ -33,6 +33,7 @@ import {
   competitorCsvRows,
   csvFilename,
 } from "./csv-rows";
+import type { CacheMode } from "./queries";
 import { PAGE_SIZE, useDomainCompetitors } from "./queries";
 import { LoadMoreBar, TabShell } from "./tab-shell";
 import type { DomainSearch } from "./url-state";
@@ -48,13 +49,16 @@ export function CompetitorsTab({
   workspaceId,
   search,
   onAnalyze,
+  cacheMode = "auto",
 }: {
   workspaceId: string | null;
   search: DomainSearch;
   /** Swaps the searched domain to the competitor. */
   onAnalyze: (domain: string) => void;
+  /** `stale` on the first load after a history click — see queries.ts. */
+  cacheMode?: CacheMode;
 }) {
-  const query = useDomainCompetitors(workspaceId, search, true);
+  const query = useDomainCompetitors(workspaceId, search, true, cacheMode);
 
   const rows = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],
