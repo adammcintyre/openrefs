@@ -11,6 +11,17 @@
  *    (see the TTL table in docs/ARCHITECTURE.md), so a long `staleTime` costs
  *    the user nothing in freshness and saves them round trips. Spending is
  *    something the user asks for — a search, "Load more", or Refresh.
+ *
+ * Phase 9 adds a third, which is really the first two applied to the cache
+ * controls themselves:
+ *
+ * 3. **`cacheMode` is a `queryFn` argument, never part of a query key.** A tab
+ *    reopened from the search history asks for `stale=true` (serve the stored
+ *    copy however old it is — $0, no upstream call), and returns to `"auto"`
+ *    once the user refreshes. If the mode were keyed, that transition would
+ *    mint a second cache entry for the same search and TanStack would fetch it,
+ *    turning a mode change into a bill. Keyed on the search alone, the mode only
+ *    colours fetches that were going to happen anyway.
  */
 import {
   useInfiniteQuery,
@@ -34,6 +45,7 @@ import type {
   MetaLocationsResponse,
 } from "../../../shared/keywords";
 import { api } from "../../lib/api";
+import type { KeywordCacheMode } from "../../routes/keyword-research/research-tabs";
 import type { KeywordTabId } from "../../routes/keyword-research/search-params";
 import type { MarketSelection } from "./market";
 
@@ -109,6 +121,19 @@ function marketParams(
 }
 
 /**
+ * The cache half.
+ *
+ * `stale=true` is sent only for a mode that asked for it, and `fresh=true` never
+ * appears here at all — the refresh mutations below are its only source, so
+ * "did something bill?" is answerable by reading the call sites rather than by
+ * tracing state. The Worker rejects the two together with a 422; keeping them in
+ * separate code paths means we cannot send that pair by accident.
+ */
+function cacheParams(mode: KeywordCacheMode): { stale?: true } {
+  return mode === "stale" ? { stale: true } : {};
+}
+
+/**
  * The server-rendered CSV export for a collection.
  *
  * A plain same-origin link rather than a fetch + blob: the session cookie
@@ -148,14 +173,16 @@ export function useKeywordOverview(
   workspaceId: string | null,
   keyword: string,
   market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
 ) {
   return useQuery({
     queryKey: keywordKeys.overview(workspaceId ?? "", keyword, market),
     queryFn: () =>
       api.get<KeywordOverviewResponse>(
-        `/keywords/overview?${queryString(
-          marketParams(workspaceId ?? "", keyword, market),
-        )}`,
+        `/keywords/overview?${queryString({
+          ...marketParams(workspaceId ?? "", keyword, market),
+          ...cacheParams(cacheMode),
+        })}`,
       ),
     enabled: workspaceId !== null && keyword !== "",
     ...PAID_QUERY_OPTIONS,
@@ -175,6 +202,7 @@ export function useKeywordList(
   tab: KeywordTabId,
   keyword: string,
   market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
 ) {
   return useInfiniteQuery({
     queryKey: keywordKeys.list(workspaceId ?? "", tab, keyword, market),
@@ -184,6 +212,7 @@ export function useKeywordList(
           ...marketParams(workspaceId ?? "", keyword, market),
           limit: PAGE_SIZE,
           offset: pageParam,
+          ...cacheParams(cacheMode),
         })}`,
       ),
     initialPageParam: 0,
@@ -246,6 +275,71 @@ export function useRefreshSerp(
       queryClient.setQueryData(
         keywordKeys.serp(workspaceId ?? "", keyword, market),
         data,
+      );
+    },
+  });
+}
+
+/**
+ * What one Refresh press spent, so the UI can say so.
+ *
+ * Both halves are reported because they are two calls to two priced endpoints
+ * and a single figure would hide which one is expensive.
+ */
+export interface KeywordRefreshResult {
+  overview: KeywordOverviewResponse;
+  list: KeywordListResponse;
+  costUsd: number;
+}
+
+/**
+ * Re-fetches the searched keyword live: the overview, plus the first page of
+ * whichever list the user is looking at.
+ *
+ * The scope is the product decision. "Refresh" has to mean one predictable
+ * charge, so it touches exactly the two things on screen — never the other two
+ * tabs, never another research tab, and never page two of anything. Each of the
+ * two requests carries `fresh=true` exactly once, which is the whole of the
+ * module's spending surface outside an explicit search and "Load more".
+ *
+ * Results are written straight into the cache rather than invalidated, mirroring
+ * `useRefreshSerp`: an invalidate would refetch what we have just paid for. The
+ * infinite query is reset to a single page, because page two of the previous
+ * fetch describes a ranking that has just moved underneath it.
+ */
+export function useRefreshKeywordSearch(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<KeywordRefreshResult> => {
+      const shared = marketParams(workspaceId ?? "", keyword, market);
+      const [overview, list] = await Promise.all([
+        api.get<KeywordOverviewResponse>(
+          `/keywords/overview?${queryString({ ...shared, fresh: true })}`,
+        ),
+        api.get<KeywordListResponse>(
+          `/keywords/${tab}?${queryString({
+            ...shared,
+            limit: PAGE_SIZE,
+            offset: 0,
+            fresh: true,
+          })}`,
+        ),
+      ]);
+      return { overview, list, costUsd: overview.costUsd + list.costUsd };
+    },
+    onSuccess: ({ overview, list }) => {
+      queryClient.setQueryData(
+        keywordKeys.overview(workspaceId ?? "", keyword, market),
+        overview,
+      );
+      queryClient.setQueryData(
+        keywordKeys.list(workspaceId ?? "", tab, keyword, market),
+        { pages: [list], pageParams: [0] },
       );
     },
   });

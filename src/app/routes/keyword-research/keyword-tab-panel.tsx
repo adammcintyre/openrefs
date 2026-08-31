@@ -38,6 +38,7 @@ import { TrackKeywordsDialog } from "../../components/tracking/track-keywords-di
 import { Button, EmptyState } from "../../components/ui";
 import { downloadCsv } from "../../lib/csv";
 import type { KeywordRow } from "../../../shared/keywords";
+import type { KeywordCacheMode } from "./research-tabs";
 import type { KeywordTabId } from "./search-params";
 import { TAB_LABELS } from "./search-params";
 
@@ -59,13 +60,18 @@ export function KeywordTabPanel({
   tab,
   keyword,
   market,
+  cacheMode = "auto",
+  onOpenKeyword,
 }: {
   workspaceId: string | null;
   tab: KeywordTabId;
   keyword: string;
   market: MarketSelection;
+  cacheMode?: KeywordCacheMode;
+  /** Drill down: open this keyword as its own research tab. */
+  onOpenKeyword?: (keyword: string) => void;
 }) {
-  const query = useKeywordList(workspaceId, tab, keyword, market);
+  const query = useKeywordList(workspaceId, tab, keyword, market, cacheMode);
 
   const [filters, setFilters] = useState<KeywordFilterState>(EMPTY_FILTERS);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -239,6 +245,7 @@ export function KeywordTabPanel({
         onViewSerp={onViewSerp}
         onAddToCollection={onAddToCollection}
         onTrack={onTrack}
+        onOpenKeyword={onOpenKeyword}
         emptyState={
           filtersActive && loadedRows.length > 0 ? (
             <EmptyState

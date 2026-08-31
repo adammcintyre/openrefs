@@ -130,6 +130,52 @@ export function formatDate(iso: string | null | undefined): string {
 }
 
 /**
+ * An ISO timestamp as "3 days ago".
+ *
+ * Used for two different facts that both want the same reading: when a cached
+ * payload was really fetched (`ResultMeta.fetchedAt`) and when a search was last
+ * run (the history trail). Both are answers to "is this still worth trusting?",
+ * and a relative distance answers that in a way an absolute date does not —
+ * nobody knows off-hand whether 12 August was recent.
+ *
+ * `now` is injectable so the tests are not a clock. Anything unparseable, or a
+ * timestamp from the future (clock skew between the Worker and the browser),
+ * returns null rather than a nonsense phrase: the caller omits the chip.
+ */
+export function formatRelativeTime(
+  iso: string | null | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (iso === null || iso === undefined || iso === "") return null;
+
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+
+  const seconds = Math.round((now - then) / 1000);
+  if (seconds < -60) return null;
+  if (seconds < 60) return "just now";
+
+  const UNITS: ReadonlyArray<[seconds: number, name: string]> = [
+    [60, "minute"],
+    [3600, "hour"],
+    [86_400, "day"],
+    [604_800, "week"],
+    [2_592_000, "month"],
+    [31_536_000, "year"],
+  ];
+
+  // Largest unit that still yields a count of at least one, so 400 days reads
+  // as "1 year ago" rather than "13 months ago".
+  let chosen = UNITS[0] as [number, string];
+  for (const unit of UNITS) {
+    if (seconds >= unit[0]) chosen = unit;
+  }
+
+  const count = Math.floor(seconds / chosen[0]);
+  return `${count} ${chosen[1]}${count === 1 ? "" : "s"} ago`;
+}
+
+/**
  * Keyword difficulty, 0–100, as a labelled band.
  *
  * The label carries the meaning rather than the colour alone: "72" tells a
