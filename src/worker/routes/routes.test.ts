@@ -206,6 +206,37 @@ describe("session guard", () => {
   });
 });
 
+describe("public auth routes", () => {
+  /*
+   * Phase 8c. Password reset is deliberately absent from the guard list above:
+   * someone who cannot sign in is precisely who needs these two, so a 401 here
+   * would be a bug rather than a policy. Validation is what answers an
+   * anonymous caller instead — which is also why these probes touch no
+   * binding, exactly like the guarded ones.
+   */
+  const publicPosts: [string, string][] = [
+    ["POST", "/auth/forgot"],
+    ["POST", "/auth/reset"],
+  ];
+
+  it.each(publicPosts)(
+    "%s %s answers an anonymous caller rather than demanding a session",
+    async (method, path) => {
+      const res = await app.request(`${API_PREFIX}${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).not.toBe(401);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({
+        error: { code: "validation_failed" },
+      });
+    },
+  );
+});
+
 describe("request validation", () => {
   it("rejects a login with no JSON body as bad_request", async () => {
     const res = await app.request(`${API_PREFIX}/auth/login`, {

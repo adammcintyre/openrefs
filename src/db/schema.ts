@@ -86,6 +86,38 @@ export const sessions = sqliteTable(
   ],
 );
 
+/**
+ * Outstanding "forgot my password" tokens (Phase 8c).
+ *
+ * Same shape of secret as `invites`: only `sha256Hex(token)` is stored, so a
+ * dump of this table cannot be replayed into anyone's account. Unlike an
+ * invite, a redeemed row is *kept* and stamped with `usedAt` rather than
+ * deleted — a reused link has to answer 410 rather than 404, and keeping the
+ * row is what lets `/auth/reset` tell "already used" apart from "never
+ * existed" without a second lookup. Issuing a new reset deletes the user's
+ * older rows, so the table holds at most one row per user between requests
+ * and never needs a sweep.
+ *
+ * Not workspace data, so it is absent from the workspace cascade by design; it
+ * hangs off `users` and goes with the account (CLAUDE.md hard rule 6).
+ */
+export const passwordResets = sqliteTable(
+  "password_resets",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** SHA-256 of the reset token. The raw token only ever exists in the link. */
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    /** Null while the link is still usable; stamped the moment it is redeemed. */
+    usedAt: integer("used_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("password_resets_user_id_idx").on(t.userId)],
+);
+
 /* -------------------------------------------------------------------------- */
 /* Workspaces                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -516,10 +548,18 @@ export const aiSnapshots = sqliteTable(
 export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   memberships: many(workspaceMembers),
+  passwordResets: many(passwordResets),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
+}));
+
+export const passwordResetsRelations = relations(passwordResets, ({ one }) => ({
+  user: one(users, {
+    fields: [passwordResets.userId],
+    references: [users.id],
+  }),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
