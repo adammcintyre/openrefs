@@ -267,3 +267,24 @@ export interface BacklinksScoresResponse extends ResultMeta {
   items: TargetScore[];
   itemsCount: number | null;
 }
+
+/**
+ * Sort orders for the backlinks list. Applied server-side as the provider's
+ * `order_by`, so changing sort is a fresh provider query, not a client-side
+ * reshuffle. `domain_score` is the default and matches the old fixed
+ * behaviour (referring domain authority first).
+ */
+export const BACKLINK_SORTS = [
+  "domain_score",
+  "page_score",
+  "newest",
+  "oldest",
+] as const;
+export type BacklinkSort = (typeof BACKLINK_SORTS)[number];
+
+/**
+ * The `maxSpamScore` the "Hide likely spam" toggle applies (provider spam
+ * score, 0–100). 30 keeps ordinary directories and forums while dropping the
+ * bulk-comment and link-farm tier.
+ */
+export const BACKLINKS_SPAM_HIDE_THRESHOLD = 30;

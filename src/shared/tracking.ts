@@ -300,3 +300,36 @@ export function shiftIsoDate(date: string, days: number): string | null {
 export function toIsoDate(at: Date): string {
   return at.toISOString().slice(0, 10);
 }
+
+/**
+ * One day of a project's `rank_snapshots`, rolled up for the overview chart.
+ *
+ * Derived entirely from D1 — no provider call and no ResultMeta — so the chart
+ * over these is free to render on every visit.
+ */
+export interface RankSummaryPoint {
+  /** `YYYY-MM-DD`, UTC — the form `rank_snapshots.date` stores. */
+  date: string;
+  /** Mean of the positions that ranked that day; null when none did. */
+  avgPosition: number | null;
+  /** Keywords at position ≤ 3 that day. */
+  top3: number;
+  /** Keywords at position ≤ 10 that day. */
+  top10: number;
+  /** Keywords at position ≤ 100 that day. */
+  top100: number;
+  /** Keywords with any snapshot that day — the denominator for the bands. */
+  tracked: number;
+}
+
+/**
+ * GET /api/v1/projects/:id/rank/summary?workspace=<id>&days=<n>
+ *
+ * Points are oldest first and **days can be missing** (a project first checked
+ * on a Tuesday has no Monday row): plot by `date`, never by index.
+ */
+export interface RankSummaryResponse {
+  /** The window actually applied — `days` clamped to what the API allows. */
+  days: number;
+  points: RankSummaryPoint[];
+}

@@ -103,18 +103,27 @@ export interface ResultMeta {
   cached: boolean;
   /**
    * True when this answer came from a cache entry that had already passed its
-   * normal lifetime, served because refreshing it timed out upstream.
-   *
-   * `cached` is true alongside it, so the pair reads as "from cache, and older
-   * than we would normally serve" — a chip saying "cached · may be outdated"
-   * is the intended treatment. It is never set because a request was merely
-   * slow, and never on a `fresh` request, which must fail rather than quietly
-   * return the copy the caller paid to bypass.
+   * normal lifetime. Two paths set it: refreshing timed out upstream and the
+   * old copy beat an error, or the caller asked for the old copy outright with
+   * `stale=true` — the search-history flow, where reopening a past search must
+   * cost $0. `cached` is true alongside it, so the pair reads as "from cache,
+   * and older than we would normally serve". It is never set because a request
+   * was merely slow, and never on a `fresh` request, which must fail rather
+   * than quietly return the copy the caller paid to bypass.
    *
    * Optional and additive: absent and `false` mean the same thing, so every
    * response predating this field stays valid. Read it as `stale ?? false`.
    */
   stale?: boolean;
+  /**
+   * When the underlying DataForSEO payload was fetched from the wire, ISO 8601
+   * UTC. On a cache hit this is the original fetch, not this request — it is
+   * the date behind "Updated 3 days ago" next to a Refresh button. Nullable
+   * because one endpoint (SERP) reports the provider's own crawl time, which
+   * the provider can omit. Optional and additive like `stale`; endpoints not
+   * yet threaded leave it absent.
+   */
+  fetchedAt?: string | null;
 }
 
 /** One DataForSEO endpoint's slice of a month's spend. */
