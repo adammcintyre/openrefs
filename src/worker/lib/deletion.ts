@@ -22,7 +22,8 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Db } from "../../db";
-import { projects, workspaces } from "../../db";
+import { audits, projects, workspaces } from "../../db";
+import { deleteAuditBlobs } from "../audit/storage";
 import type { RevokeSummary } from "../gsc/tokens";
 import {
   purgeProjectGscKv,
@@ -165,6 +166,12 @@ export async function deleteWorkspaceEverywhere(
 export interface ProjectDeletionStores {
   db: Db;
   kv: KVNamespace;
+  /**
+   * Where audit blobs live. Every audit of this project writes crawl sections
+   * and issue indexes under `ws:<ws>/audits/<auditId>/`, and no D1 cascade
+   * reaches R2 — see `deleteProjectEverywhere`.
+   */
+  r2: R2Bucket;
   /** `APP_MASTER_KEY` — to decrypt the refresh token long enough to revoke it. */
   masterKey: string;
 }
@@ -176,6 +183,10 @@ export interface ProjectPurgeResult {
    */
   reportCacheKeys: number;
   googleGrants: RevokeSummary;
+  /** Audits whose blob prefix was swept. */
+  auditsPurged: number;
+  /** R2 objects removed across all of them. */
+  auditBlobs: number;
 }
 
 /**
@@ -198,6 +209,13 @@ export interface ProjectPurgeResult {
  *           keyed by project id under the workspace prefix, so nothing in D1
  *           reaches them and only workspace deletion would otherwise sweep
  *           them — eventually, if the workspace is ever deleted at all.
+ *   R2      holds every audit's crawl blobs under
+ *           `ws:<ws>/audits/<auditId>/`. Same ordering constraint as Google's,
+ *           and a sharper one: `audits` cascades from `projects`, so the row
+ *           carrying each audit id is destroyed by the DELETE below. Listing
+ *           the audits afterwards is not late, it is impossible — the ids are
+ *           gone, and megabytes of crawl data would sit under a prefix nothing
+ *           points at until (or unless) the whole workspace is deleted.
  *
  * Caller must have already authorised the actor as an admin of the workspace;
  * this does no authorization of its own beyond scoping every statement to
@@ -211,11 +229,11 @@ export interface ProjectPurgeResult {
  * user's own Google account settings either way.
  */
 export async function deleteProjectEverywhere(
-  { db, kv, masterKey }: ProjectDeletionStores,
+  { db, kv, r2, masterKey }: ProjectDeletionStores,
   workspaceId: string,
   projectId: string,
 ): Promise<ProjectPurgeResult> {
-  const [googleGrants, reportCacheKeys] = await Promise.all([
+  const [googleGrants, reportCacheKeys, auditBlobs] = await Promise.all([
     revokeProjectGoogleToken(db, masterKey, workspaceId, projectId).catch(
       (err: unknown) => {
         logProjectCleanupFailure("google token revocation", workspaceId, projectId, err);
@@ -226,13 +244,71 @@ export async function deleteProjectEverywhere(
       logProjectCleanupFailure("gsc cache purge", workspaceId, projectId, err);
       return 0;
     }),
+    purgeProjectAuditBlobs(db, r2, workspaceId, projectId).catch(
+      (err: unknown) => {
+        logProjectCleanupFailure("audit blob purge", workspaceId, projectId, err);
+        return { audits: 0, objects: 0 };
+      },
+    ),
   ]);
 
   await db
     .delete(projects)
     .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)));
 
-  return { reportCacheKeys, googleGrants };
+  return {
+    reportCacheKeys,
+    googleGrants,
+    auditsPurged: auditBlobs.audits,
+    auditBlobs: auditBlobs.objects,
+  };
+}
+
+/**
+ * Deletes the R2 blobs of every audit belonging to this project.
+ *
+ * Reuses `deleteAuditBlobs` — the same sweep `DELETE /audits/:id` performs —
+ * rather than re-deriving the prefix, so there is one definition of "an audit's
+ * blobs" and a change to the layout cannot leave this path behind.
+ *
+ * The audits are listed through the project's workspace, not by audit id
+ * alone: `audits` has no workspace column, and scoping the read the same way
+ * every other audit query does is what keeps a project id from another tenant
+ * unable to name blobs to delete.
+ *
+ * One audit whose sweep fails does not stop the others: the loop is per-audit
+ * and best-effort, because a half-purged project must still be deletable.
+ */
+async function purgeProjectAuditBlobs(
+  db: Db,
+  r2: R2Bucket,
+  workspaceId: string,
+  projectId: string,
+): Promise<{ audits: number; objects: number }> {
+  const rows = await db
+    .select({ id: audits.id })
+    .from(audits)
+    .innerJoin(projects, eq(projects.id, audits.projectId))
+    .where(
+      and(eq(audits.projectId, projectId), eq(projects.workspaceId, workspaceId)),
+    );
+
+  let objects = 0;
+  let purged = 0;
+  for (const row of rows) {
+    try {
+      objects += await deleteAuditBlobs(r2, workspaceId, row.id);
+      purged += 1;
+    } catch (err) {
+      logProjectCleanupFailure(
+        `audit blob purge (${row.id})`,
+        workspaceId,
+        projectId,
+        err,
+      );
+    }
+  }
+  return { audits: purged, objects };
 }
 
 function logProjectCleanupFailure(

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "../../db";
 import { projects } from "../../db";
+import { deleteAuditBlobs } from "../audit/storage";
 import {
   purgeProjectGscKv,
   revokeProjectGoogleToken,
@@ -31,9 +32,21 @@ vi.mock("../gsc/tokens", () => ({
   purgeProjectGscKv: vi.fn(async () => 0),
 }));
 
+/**
+ * Stubbed for the same reason the Search Console pair is: this file tests the
+ * *cascade's* contract — that audit blobs are swept, before the row cascade
+ * destroys the ids naming them, and that a failure cannot veto the deletion.
+ * The sweep's own behaviour against a real R2 layout belongs to
+ * src/worker/audit/storage.ts.
+ */
+vi.mock("../audit/storage", () => ({
+  deleteAuditBlobs: vi.fn(async () => 0),
+}));
+
 const mockRevoke = vi.mocked(revokeWorkspaceGoogleTokens);
 const mockRevokeProject = vi.mocked(revokeProjectGoogleToken);
 const mockPurgeProjectKv = vi.mocked(purgeProjectGscKv);
+const mockDeleteAuditBlobs = vi.mocked(deleteAuditBlobs);
 
 beforeEach(() => {
   mockRevoke.mockReset();
@@ -42,6 +55,8 @@ beforeEach(() => {
   mockRevokeProject.mockResolvedValue({ attempted: 0, revoked: 0 });
   mockPurgeProjectKv.mockReset();
   mockPurgeProjectKv.mockResolvedValue(0);
+  mockDeleteAuditBlobs.mockReset();
+  mockDeleteAuditBlobs.mockResolvedValue(0);
 });
 
 const MASTER_KEY = "a".repeat(64);
@@ -360,9 +375,22 @@ describe("deleteWorkspaceEverywhere", () => {
 
 describe("deleteProjectEverywhere", () => {
   const PROJECT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const AUDIT_A = "audit-aaaa";
+  const AUDIT_B = "audit-bbbb";
 
-  /** Records when the project row was dropped, and from which table. */
-  function trackingDb(order: string[], tables: unknown[]): Db {
+  /**
+   * Records when the project row was dropped, and answers the audit lookup.
+   *
+   * The select chain mirrors the real one exactly —
+   * `select().from().innerJoin().where()` — because the join *is* the
+   * authorization here: `audits` has no workspace column, so an audit is only
+   * reachable through its project's workspace.
+   */
+  function trackingDb(
+    order: string[],
+    tables: unknown[],
+    auditIds: string[] = [],
+  ): Db {
     return {
       delete: (table: unknown) => {
         tables.push(table);
@@ -372,10 +400,17 @@ describe("deleteProjectEverywhere", () => {
           },
         };
       },
+      select: () => ({
+        from: () => ({
+          innerJoin: () => ({
+            where: async () => auditIds.map((id) => ({ id })),
+          }),
+        }),
+      }),
     } as unknown as Db;
   }
 
-  function stores(order: string[]) {
+  function stores(order: string[], auditIds: string[] = []) {
     mockRevokeProject.mockImplementation(async () => {
       order.push("revoke");
       return { attempted: 1, revoked: 1 };
@@ -384,9 +419,24 @@ describe("deleteProjectEverywhere", () => {
       order.push("kv");
       return 3;
     });
+    mockDeleteAuditBlobs.mockImplementation(async () => {
+      order.push("r2");
+      return 7;
+    });
     return {
-      db: trackingDb(order, []),
+      db: trackingDb(order, [], auditIds),
       kv: {} as KVNamespace,
+      r2: {} as R2Bucket,
+      masterKey: MASTER_KEY,
+    };
+  }
+
+  /** The stores, with no audits to purge — the shape most of these tests want. */
+  function bareStores(order: string[] = [], tables: unknown[] = []) {
+    return {
+      db: trackingDb(order, tables),
+      kv: {} as KVNamespace,
+      r2: {} as R2Bucket,
       masterKey: MASTER_KEY,
     };
   }
@@ -406,6 +456,8 @@ describe("deleteProjectEverywhere", () => {
     expect(result).toEqual({
       reportCacheKeys: 3,
       googleGrants: { attempted: 1, revoked: 1 },
+      auditsPurged: 0,
+      auditBlobs: 0,
     });
   });
 
@@ -426,7 +478,7 @@ describe("deleteProjectEverywhere", () => {
     const tables: unknown[] = [];
 
     await deleteProjectEverywhere(
-      { db: trackingDb(order, tables), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      bareStores(order, tables),
       WS,
       PROJECT,
     );
@@ -439,7 +491,7 @@ describe("deleteProjectEverywhere", () => {
     // `gsc_connections` has no workspace column. Passing the project id on its
     // own would let another tenant's connection be found by id.
     await deleteProjectEverywhere(
-      { db: trackingDb([], []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      bareStores(),
       WS,
       PROJECT,
     );
@@ -467,7 +519,7 @@ describe("deleteProjectEverywhere", () => {
       .mockImplementation(() => undefined);
 
     const result = await deleteProjectEverywhere(
-      { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      bareStores(order),
       WS,
       PROJECT,
     );
@@ -487,7 +539,7 @@ describe("deleteProjectEverywhere", () => {
       .mockImplementation(() => undefined);
 
     const result = await deleteProjectEverywhere(
-      { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      bareStores(order),
       WS,
       PROJECT,
     );
@@ -509,13 +561,15 @@ describe("deleteProjectEverywhere", () => {
 
     await expect(
       deleteProjectEverywhere(
-        { db: trackingDb(order, []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+        bareStores(order),
         WS,
         PROJECT,
       ),
     ).resolves.toEqual({
       reportCacheKeys: 0,
       googleGrants: { attempted: 0, revoked: 0 },
+      auditsPurged: 0,
+      auditBlobs: 0,
     });
     expect(order).toContain("d1");
 
@@ -526,7 +580,7 @@ describe("deleteProjectEverywhere", () => {
     mockRevokeProject.mockResolvedValue({ attempted: 1, revoked: 0 });
 
     const result = await deleteProjectEverywhere(
-      { db: trackingDb([], []), kv: {} as KVNamespace, masterKey: MASTER_KEY },
+      bareStores(),
       WS,
       PROJECT,
     );
@@ -534,5 +588,119 @@ describe("deleteProjectEverywhere", () => {
     // attempted without revoked is the ordinary "Google said no" outcome — an
     // already-dead grant is indistinguishable from one that never existed.
     expect(result.googleGrants).toEqual({ attempted: 1, revoked: 0 });
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /* Audit blobs                                                            */
+  /* ---------------------------------------------------------------------- */
+
+  it("purges every audit's blobs BEFORE the cascade drops the ids naming them", async () => {
+    // `audits.project_id` cascades from `projects`, so this DELETE destroys the
+    // audit ids. Sweeping afterwards is not "late", it is impossible: nothing
+    // would be left able to name the prefixes, and megabytes of crawl data
+    // would sit in R2 until (or unless) the whole workspace is deleted.
+    const order: string[] = [];
+
+    const result = await deleteProjectEverywhere(
+      stores(order, [AUDIT_A, AUDIT_B]),
+      WS,
+      PROJECT,
+    );
+
+    expect(order.indexOf("r2")).toBeGreaterThanOrEqual(0);
+    expect(order.lastIndexOf("r2")).toBeLessThan(order.indexOf("d1"));
+    expect(order.at(-1)).toBe("d1");
+    expect(result.auditsPurged).toBe(2);
+    expect(result.auditBlobs).toBe(14);
+  });
+
+  it("sweeps each audit under its own workspace-scoped prefix", async () => {
+    await deleteProjectEverywhere(stores([], [AUDIT_A, AUDIT_B]), WS, PROJECT);
+
+    // Reusing `deleteAuditBlobs` rather than re-deriving the prefix is what
+    // keeps this path and `DELETE /audits/:id` from drifting apart.
+    expect(mockDeleteAuditBlobs).toHaveBeenCalledTimes(2);
+    expect(mockDeleteAuditBlobs).toHaveBeenCalledWith(
+      expect.anything(),
+      WS,
+      AUDIT_A,
+    );
+    expect(mockDeleteAuditBlobs).toHaveBeenCalledWith(
+      expect.anything(),
+      WS,
+      AUDIT_B,
+    );
+  });
+
+  it("touches R2 not at all for a project with no audits", async () => {
+    const result = await deleteProjectEverywhere(bareStores(), WS, PROJECT);
+
+    expect(mockDeleteAuditBlobs).not.toHaveBeenCalled();
+    expect(result.auditsPurged).toBe(0);
+    expect(result.auditBlobs).toBe(0);
+  });
+
+  it("keeps going when ONE audit's sweep throws, and still deletes the project", async () => {
+    // A half-purged project must still be deletable. One unreachable prefix is
+    // some orphaned bytes; refusing the deletion is a user unable to remove
+    // their own data.
+    const order: string[] = [];
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const built = stores(order, [AUDIT_A, AUDIT_B]);
+    mockDeleteAuditBlobs.mockReset();
+    mockDeleteAuditBlobs.mockImplementation(async (_r2, _ws, auditId) => {
+      if (auditId === AUDIT_A) throw new Error("r2 unavailable");
+      return 5;
+    });
+
+    const result = await deleteProjectEverywhere(built, WS, PROJECT);
+
+    // The second audit was still swept — the failure did not abort the loop.
+    expect(result.auditsPurged).toBe(1);
+    expect(result.auditBlobs).toBe(5);
+    expect(order).toContain("d1");
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
+  });
+
+  it("still deletes the project when the audit lookup itself throws", async () => {
+    const order: string[] = [];
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    const db = {
+      delete: () => ({
+        where: async () => {
+          order.push("d1");
+        },
+      }),
+      select: () => ({
+        from: () => ({
+          innerJoin: () => ({
+            where: async () => {
+              throw new Error("d1 unavailable");
+            },
+          }),
+        }),
+      }),
+    } as unknown as Db;
+
+    const result = await deleteProjectEverywhere(
+      { db, kv: {} as KVNamespace, r2: {} as R2Bucket, masterKey: MASTER_KEY },
+      WS,
+      PROJECT,
+    );
+
+    expect(order).toContain("d1");
+    expect(result.auditsPurged).toBe(0);
+    expect(result.auditBlobs).toBe(0);
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
   });
 });

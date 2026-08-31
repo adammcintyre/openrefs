@@ -207,12 +207,14 @@ projectsRouter.delete("/:id", async (c) => {
   // error.
   //
   // What the cascade cannot reach is the Google OAuth grant behind
-  // `gsc_connections` and the project's KV keys, which is why this goes through
-  // the deletion module rather than deleting the row here: dropping the row
-  // first would destroy the only copy of the refresh token that could revoke
-  // the grant. Both cleanups are best-effort and neither can block the delete.
+  // `gsc_connections`, the project's KV keys, and every audit's crawl blobs in
+  // R2 — which is why this goes through the deletion module rather than
+  // deleting the row here. Dropping the row first would destroy the only copy
+  // of the refresh token that could revoke the grant, and the audit ids that
+  // name the blobs. All three cleanups are best-effort and none can block the
+  // delete.
   await deleteProjectEverywhere(
-    { db, kv: c.env.CACHE, masterKey: c.env.APP_MASTER_KEY },
+    { db, kv: c.env.CACHE, r2: c.env.BLOBS, masterKey: c.env.APP_MASTER_KEY },
     workspace,
     id,
   );
