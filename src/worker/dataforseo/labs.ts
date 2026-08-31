@@ -166,6 +166,7 @@ const keywordOverviewParamsSchema = z.object({
   locationCode: z.number().int().positive(),
   languageCode: z.string().trim().min(2).max(8),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type KeywordOverviewParams = z.input<typeof keywordOverviewParamsSchema>;
@@ -199,6 +200,7 @@ const keywordIdeasParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type KeywordIdeasParams = z.input<typeof keywordIdeasParamsSchema>;
@@ -262,6 +264,7 @@ const keywordSuggestionsParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type KeywordSuggestionsParams = z.input<
@@ -292,6 +295,7 @@ const relatedKeywordsParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type RelatedKeywordsParams = z.input<typeof relatedKeywordsParamsSchema>;
@@ -336,6 +340,7 @@ const bulkKeywordDifficultyParamsSchema = z.object({
   locationCode: z.number().int().positive(),
   languageCode: z.string().trim().min(2).max(8),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type BulkKeywordDifficultyParams = z.input<
@@ -374,6 +379,7 @@ const searchIntentParamsSchema = z.object({
     .max(LABS_MAX_BULK_KEYWORDS),
   languageCode: z.string().trim().min(2).max(8),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type SearchIntentParams = z.input<typeof searchIntentParamsSchema>;
@@ -456,6 +462,7 @@ const rankedKeywordsParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type RankedKeywordsParams = z.input<typeof rankedKeywordsParamsSchema>;
@@ -543,6 +550,7 @@ const domainRankOverviewParamsSchema = z.object({
   locationCode: z.number().int().positive(),
   languageCode: z.string().trim().min(2).max(8),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type DomainRankOverviewParams = z.input<
@@ -581,6 +589,7 @@ const historicalRankOverviewParamsSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type HistoricalRankOverviewParams = z.input<
@@ -627,6 +636,7 @@ const relevantPagesParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type RelevantPagesParams = z.input<typeof relevantPagesParamsSchema>;
@@ -673,6 +683,7 @@ const competitorsDomainParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type CompetitorsDomainParams = z.input<
@@ -768,6 +779,7 @@ const domainIntersectionParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type DomainIntersectionParams = z.input<
@@ -803,6 +815,7 @@ const pageIntersectionParamsSchema = z.object({
   filters: z.array(z.custom<LabsFilter>()).optional(),
   sorts: z.array(z.custom<LabsSort>()).optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type PageIntersectionParams = z.input<typeof pageIntersectionParamsSchema>;
@@ -982,6 +995,7 @@ const bulkTrafficEstimationParamsSchema = z.object({
   itemTypes: z.array(z.enum(LABS_ITEM_TYPES)).min(1).optional(),
   ignoreSynonyms: z.boolean().optional(),
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type BulkTrafficEstimationParams = z.input<
@@ -1132,7 +1146,7 @@ const keywordIdeasResultSchema = labsWrapperSchema(z.unknown());
 export function createLabsApi(client: DataForSeoClient): LabsApi {
   return {
     async googleKeywordOverviewLive(params) {
-      const { keywords, locationCode, languageCode, fresh } = parseParams(
+      const { keywords, locationCode, languageCode, fresh, allowStale } = parseParams(
         keywordOverviewParamsSchema,
         params,
         `Invalid keyword overview request (max ${KEYWORD_OVERVIEW_MAX_KEYWORDS} keywords, ${KEYWORD_OVERVIEW_MAX_KEYWORD_LENGTH} characters each).`,
@@ -1157,6 +1171,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // database data, the same clock as search volume.
         ttl: "long",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1183,6 +1198,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         keywordIdeasParamsSchema,
         params,
@@ -1207,6 +1223,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // Ideas are derived from search volume and move on the same clock.
         ttl: "long",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(response.results[0], GOOGLE_KEYWORD_IDEAS_LIVE);
@@ -1231,6 +1248,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         keywordSuggestionsParamsSchema,
         params,
@@ -1255,6 +1273,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // ARCHITECTURE.md puts suggestions/related in the 14-day bucket.
         ttl: "medium",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1283,6 +1302,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         relatedKeywordsParamsSchema,
         params,
@@ -1305,6 +1325,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         ],
         ttl: "medium",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1323,7 +1344,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
     },
 
     async googleBulkKeywordDifficultyLive(params) {
-      const { keywords, locationCode, languageCode, fresh } = parseParams(
+      const { keywords, locationCode, languageCode, fresh, allowStale } = parseParams(
         bulkKeywordDifficultyParamsSchema,
         params,
         `Invalid bulk difficulty request (max ${LABS_MAX_BULK_KEYWORDS} keywords).`,
@@ -1341,6 +1362,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // Difficulty is derived from the same SERP data as ranked keywords.
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1363,7 +1385,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
     },
 
     async googleSearchIntentLive(params) {
-      const { keywords, languageCode, fresh } = parseParams(
+      const { keywords, languageCode, fresh, allowStale } = parseParams(
         searchIntentParamsSchema,
         params,
         `Invalid search intent request (max ${LABS_MAX_BULK_KEYWORDS} keywords).`,
@@ -1382,6 +1404,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // about as often as search volume does.
         ttl: "long",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1408,6 +1431,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         rankedKeywordsParamsSchema,
         params,
@@ -1432,6 +1456,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // budgets for Labs SERP data; live refreshes are a separate endpoint.
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1450,7 +1475,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
     },
 
     async googleDomainRankOverviewLive(params) {
-      const { target, locationCode, languageCode, fresh } = parseParams(
+      const { target, locationCode, languageCode, fresh, allowStale } = parseParams(
         domainRankOverviewParamsSchema,
         params,
         "Invalid domain overview request.",
@@ -1467,6 +1492,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         ],
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1493,7 +1519,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
     },
 
     async googleHistoricalRankOverviewLive(params) {
-      const { target, locationCode, languageCode, dateFrom, dateTo, fresh } =
+      const { target, locationCode, languageCode, dateFrom, dateTo, fresh, allowStale } =
         parseParams(
           historicalRankOverviewParamsSchema,
           params,
@@ -1514,6 +1540,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // A monthly series; ARCHITECTURE.md puts historical/timeseries at 30d.
         ttl: "long",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1542,6 +1569,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         relevantPagesParamsSchema,
         params,
@@ -1564,6 +1592,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         ],
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1592,6 +1621,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         competitorsDomainParamsSchema,
         params,
@@ -1614,6 +1644,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         ],
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1644,6 +1675,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         domainIntersectionParamsSchema,
         params,
@@ -1670,6 +1702,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // Rankings, the same 7-day bucket as ranked_keywords.
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1702,6 +1735,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         filters,
         sorts,
         fresh,
+        allowStale,
       } = parseParams(
         pageIntersectionParamsSchema,
         params,
@@ -1731,6 +1765,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         ],
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(
@@ -1756,6 +1791,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         itemTypes,
         ignoreSynonyms,
         fresh,
+        allowStale,
       } = parseParams(
         bulkTrafficEstimationParamsSchema,
         params,
@@ -1781,6 +1817,7 @@ export function createLabsApi(client: DataForSeoClient): LabsApi {
         // clock and belongs in the same 7-day bucket.
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const wrapper = parseWrapper(

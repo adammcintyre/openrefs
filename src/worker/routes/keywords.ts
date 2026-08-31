@@ -21,10 +21,11 @@ import { RELATED_KEYWORDS_MAX_DEPTH } from "../dataforseo";
 import { readQuery } from "../lib/validate";
 import {
   authorizeWorkspace,
-  booleanParam,
+  freshnessShape,
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  withFreshness,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
 import { historyContext, recordSearch } from "../services/history";
@@ -46,7 +47,7 @@ const keywordQuerySchema = marketQuerySchema.extend({
 });
 
 export const keywordListQuerySchema = keywordQuerySchema
-  .extend({ fresh: booleanParam })
+  .extend(freshnessShape)
   .extend(pagingQuerySchema.shape)
   .extend(rangeQuerySchema.shape)
   .extend({
@@ -55,12 +56,9 @@ export const keywordListQuerySchema = keywordQuerySchema
     exclude: z.string().trim().min(1).optional(),
   });
 
-export const keywordOverviewQuerySchema = keywordQuerySchema.extend({
-  fresh: booleanParam,
-});
+export const keywordOverviewQuerySchema = keywordQuerySchema.extend(freshnessShape);
 
-export const keywordSerpQuerySchema = keywordQuerySchema.extend({
-  fresh: booleanParam,
+export const keywordSerpQuerySchema = keywordQuerySchema.extend(freshnessShape).extend({
   device: z.enum(["desktop", "mobile"]).optional(),
 });
 
@@ -72,7 +70,7 @@ export const keywordSerpQuerySchema = keywordQuerySchema.extend({
  * views over that same seed and would fill the trail with near-duplicates.
  */
 keywords.get("/overview", async (c) => {
-  const query = readQuery(c, keywordOverviewQuerySchema);
+  const query = readQuery(c, withFreshness(keywordOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   const body = await keywordOverview(c.env, db, query);
 
@@ -100,13 +98,13 @@ keywords.get("/overview", async (c) => {
 });
 
 keywords.get("/ideas", async (c) => {
-  const query = readQuery(c, keywordListQuerySchema);
+  const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   return c.json(await keywordIdeas(c.env, db, query));
 });
 
 keywords.get("/suggestions", async (c) => {
-  const query = readQuery(c, keywordListQuerySchema);
+  const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   return c.json(await keywordSuggestions(c.env, db, query));
 });
@@ -114,21 +112,23 @@ keywords.get("/suggestions", async (c) => {
 keywords.get("/related", async (c) => {
   const query = readQuery(
     c,
-    keywordListQuerySchema.extend({
-      depth: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .max(RELATED_KEYWORDS_MAX_DEPTH)
-        .optional(),
-    }),
+    withFreshness(
+      keywordListQuerySchema.extend({
+        depth: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(RELATED_KEYWORDS_MAX_DEPTH)
+          .optional(),
+      }),
+    ),
   );
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   return c.json(await keywordRelated(c.env, db, query));
 });
 
 keywords.get("/serp", async (c) => {
-  const query = readQuery(c, keywordSerpQuerySchema);
+  const query = readQuery(c, withFreshness(keywordSerpQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   return c.json(await keywordSerp(c.env, db, query));
 });

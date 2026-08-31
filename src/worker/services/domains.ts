@@ -20,6 +20,7 @@ import type {
 import { createDataForSeoApi } from "../dataforseo";
 import type { LabsRankMetrics } from "../dataforseo";
 import { RANKED_KEYWORDS_FIELDS, containsFilter } from "../dataforseo";
+import { fetchedAtIso } from "../dataforseo/schema";
 import type { LabsFilter } from "../dataforseo/filters";
 import { rangeFilters } from "../dataforseo/filters";
 
@@ -43,7 +44,10 @@ export interface DomainQueryInput {
   domain: string;
   location: number;
   language: string;
+  /** Bypass the cache and buy a new answer. */
   fresh?: boolean;
+  /** Serve a cached answer past its normal lifetime, spending nothing. */
+  allowStale?: boolean;
 }
 
 export interface DomainKeywordsInput extends DomainQueryInput {
@@ -73,6 +77,7 @@ export async function domainOverview(
     locationCode: input.location,
     languageCode: input.language,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   return {
@@ -83,6 +88,8 @@ export async function domainOverview(
     paid: toRankMetrics(result.paid),
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
 }
 
@@ -134,6 +141,7 @@ export async function domainKeywords(
     filters,
     sorts: [{ field: RANKED_KEYWORDS_FIELDS.position, direction: "asc" }],
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   return {
@@ -161,5 +169,7 @@ export async function domainKeywords(
     offset: input.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
 }

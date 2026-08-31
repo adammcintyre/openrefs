@@ -22,6 +22,8 @@ import type {
 import { createDataForSeoApi } from "../dataforseo";
 import type { LabsKeywordRow } from "../dataforseo";
 import { containsFilter, toIsoMonth } from "../dataforseo";
+import type { WrappedMeta } from "../dataforseo/schema";
+import { fetchedAtIso } from "../dataforseo/schema";
 import type { LabsFilter, LabsSort } from "../dataforseo/filters";
 import { rangeFilters } from "../dataforseo/filters";
 
@@ -34,7 +36,14 @@ export interface KeywordQueryInput {
   keyword: string;
   location: number;
   language: string;
+  /** Bypass the cache and buy a new answer. */
   fresh?: boolean;
+  /**
+   * Serve a cached answer even past its normal lifetime, spending nothing.
+   * Named for the *client* option rather than the `stale` query parameter —
+   * see `toFreshness` in lib/research.ts for why the two words differ.
+   */
+  allowStale?: boolean;
 }
 
 /** The filter set the three list endpoints share. */
@@ -112,9 +121,7 @@ function listBody(
   result: {
     totalCount: number | null;
     itemsCount: number | null;
-    costUsd: number;
-    cached: boolean;
-  },
+  } & WrappedMeta,
 ): KeywordListResponse {
   return {
     keyword: query.keyword.toLowerCase(),
@@ -127,6 +134,8 @@ function listBody(
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
 }
 
@@ -163,6 +172,7 @@ export async function keywordOverview(
     locationCode: input.location,
     languageCode: input.language,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   // A keyword their database does not know is OMITTED from `items` rather than
@@ -212,6 +222,8 @@ export async function keywordOverview(
     })),
     costUsd: overview.costUsd,
     cached: overview.cached,
+    stale: overview.stale ?? false,
+    fetchedAt: fetchedAtIso(overview),
   };
 }
 
@@ -231,6 +243,7 @@ export async function keywordIdeas(
     filters: flatRowFilters(input),
     sorts: VOLUME_DESC_FLAT,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   return listBody(input, result.items.map(toKeywordRow), result);
@@ -252,6 +265,7 @@ export async function keywordSuggestions(
     filters: flatRowFilters(input),
     sorts: VOLUME_DESC_FLAT,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   return listBody(input, result.items.map(toKeywordRow), result);
@@ -275,6 +289,7 @@ export async function keywordRelated(
     filters: wrappedRowFilters(input),
     sorts: VOLUME_DESC_WRAPPED,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   const items: KeywordRow[] = result.items.map((row) => ({
@@ -299,6 +314,7 @@ export async function keywordSerp(
     languageCode: input.language,
     device: input.device,
     fresh: input.fresh,
+    allowStale: input.allowStale,
   });
 
   return {
@@ -306,6 +322,13 @@ export async function keywordSerp(
     locationCode: input.location,
     languageCode: input.language,
     checkUrl: result.checkUrl,
+    /*
+     * The ONE `fetchedAt` in this API that is not our cache's clock: the SERP
+     * endpoint reports the provider's own crawl time, which is a better answer
+     * to "when was this page seen" than "when did we fetch it", and which the
+     * provider may omit. Left exactly as it was when `ResultMeta.fetchedAt`
+     * landed — see the field note in src/shared/api.ts.
+     */
     fetchedAt: result.fetchedAt,
     serpFeatures: result.serpFeatures,
     totalResults: result.totalResults,
@@ -320,5 +343,6 @@ export async function keywordSerp(
     })),
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
   };
 }

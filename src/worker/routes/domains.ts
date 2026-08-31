@@ -22,14 +22,18 @@ import type {
 import { createDataForSeoApi } from "../dataforseo";
 import type { DataForSeoApi } from "../dataforseo";
 import { RELEVANT_PAGES_FIELDS } from "../dataforseo";
+import { fetchedAtIso } from "../dataforseo/schema";
 import { readQuery } from "../lib/validate";
 import {
   authorizeWorkspace,
   booleanParam,
   domainParam,
+  freshnessShape,
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  toFreshness,
+  withFreshness,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
 import { domainKeywords, domainOverview, toRankMetrics } from "../services/domains";
@@ -84,10 +88,9 @@ export function marketLanguage(
   return market.languages[0] ?? wanted;
 }
 
-const domainQuerySchema = marketQuerySchema.extend({
-  domain: domainParam,
-  fresh: booleanParam,
-});
+const domainQuerySchema = marketQuerySchema
+  .extend({ domain: domainParam })
+  .extend(freshnessShape);
 
 const listQuerySchema = domainQuerySchema.extend(pagingQuerySchema.shape);
 
@@ -116,7 +119,7 @@ export const domainKeywordsQuerySchema = listQuerySchema
  * so recording each of them would fill the trail with one search five times.
  */
 domains.get("/overview", async (c) => {
-  const query = readQuery(c, domainOverviewQuerySchema);
+  const query = readQuery(c, withFreshness(domainOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   const body = await domainOverview(c.env, db, query);
 
@@ -153,10 +156,12 @@ domains.get("/overview", async (c) => {
 domains.get("/history", async (c) => {
   const query = readQuery(
     c,
-    domainQuerySchema.extend({
-      dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    }),
+    withFreshness(
+      domainQuerySchema.extend({
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      }),
+    ),
   );
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
@@ -166,7 +171,7 @@ domains.get("/history", async (c) => {
     languageCode: query.language,
     dateFrom: query.dateFrom,
     dateTo: query.dateTo,
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainHistoryResponse = {
@@ -185,18 +190,20 @@ domains.get("/history", async (c) => {
       })),
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
 
 domains.get("/keywords", async (c) => {
-  const query = readQuery(c, domainKeywordsQuerySchema);
+  const query = readQuery(c, withFreshness(domainKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   return c.json(await domainKeywords(c.env, db, query));
 });
 
 domains.get("/pages", async (c) => {
-  const query = readQuery(c, listQuerySchema);
+  const query = readQuery(c, withFreshness(listQuerySchema));
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
   const result = await dfs.labs.googleRelevantPagesLive({
@@ -206,7 +213,7 @@ domains.get("/pages", async (c) => {
     limit: query.limit,
     offset: query.offset,
     sorts: [{ field: RELEVANT_PAGES_FIELDS.organicEtv, direction: "desc" }],
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainPagesResponse = {
@@ -224,12 +231,14 @@ domains.get("/pages", async (c) => {
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
 
 domains.get("/competitors", async (c) => {
-  const query = readQuery(c, listQuerySchema);
+  const query = readQuery(c, withFreshness(listQuerySchema));
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
   const result = await dfs.labs.googleCompetitorsDomainLive({
@@ -239,7 +248,7 @@ domains.get("/competitors", async (c) => {
     limit: query.limit,
     offset: query.offset,
     sorts: [{ field: "metrics.organic.count", direction: "desc" }],
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainCompetitorsResponse = {
@@ -264,6 +273,8 @@ domains.get("/competitors", async (c) => {
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
@@ -282,9 +293,12 @@ domains.get("/competitors", async (c) => {
 domains.get("/countries", async (c) => {
   const query = readQuery(
     c,
-    marketQuerySchema
-      .omit({ location: true })
-      .extend({ domain: domainParam, fresh: booleanParam }),
+    withFreshness(
+      marketQuerySchema
+        .omit({ location: true })
+        .extend({ domain: domainParam })
+        .extend(freshnessShape),
+    ),
   );
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
@@ -295,7 +309,7 @@ domains.get("/countries", async (c) => {
         target: query.domain,
         locationCode: market.locationCode,
         languageCode,
-        fresh: query.fresh,
+        ...toFreshness(query),
       });
       return { market, result, languageCode };
     }),
@@ -305,6 +319,16 @@ domains.get("/countries", async (c) => {
   const failedCountries: string[] = [];
   let costUsd = 0;
   let allCached = true;
+  let anyStale = false;
+  /*
+   * The OLDEST market's fetch, not the newest.
+   *
+   * This one body is composed from ten separately cached answers, so there is
+   * no single moment it was fetched. "Updated N days ago" has to be true of the
+   * whole table, and only the oldest leg makes it true — claiming the newest
+   * would date the report by its freshest row.
+   */
+  let oldestFetchedAtMs: number | null = null;
 
   for (const [index, outcome] of settled.entries()) {
     const market = COUNTRY_BREAKDOWN_MARKETS[index];
@@ -318,6 +342,13 @@ domains.get("/countries", async (c) => {
     const { result, languageCode } = outcome.value;
     costUsd += result.costUsd;
     allCached &&= result.cached;
+    anyStale ||= result.stale === true;
+    if (
+      typeof result.fetchedAtMs === "number" &&
+      (oldestFetchedAtMs === null || result.fetchedAtMs < oldestFetchedAtMs)
+    ) {
+      oldestFetchedAtMs = result.fetchedAtMs;
+    }
     items.push({
       locationCode: market.locationCode,
       countryIsoCode: market.countryIsoCode,
@@ -339,6 +370,10 @@ domains.get("/countries", async (c) => {
     costUsd,
     // "Cached" only if nothing was paid for; an empty success set is not cached.
     cached: items.length > 0 && allCached,
+    // One stale leg makes the whole table older than we would normally serve.
+    stale: anyStale,
+    fetchedAt:
+      oldestFetchedAtMs === null ? null : new Date(oldestFetchedAtMs).toISOString(),
   };
   return c.json(body);
 });

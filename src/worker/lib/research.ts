@@ -66,6 +66,66 @@ export const booleanParam = z
 export const limitParam = z.coerce.number().int().min(1).max(MAX_LIMIT);
 export const offsetParam = z.coerce.number().int().min(0);
 
+/**
+ * The two cache instructions a research GET may carry.
+ *
+ * `fresh` bypasses the cache and buys a new answer; `stale` serves the cached
+ * one even past its normal lifetime and spends nothing — the search-history
+ * flow, where re-opening a past search must be free.
+ *
+ * A shape rather than a schema so it can be `.extend()`ed onto each route's
+ * query; the rule that the two are exclusive is `withFreshness`, applied last
+ * (zod refinements are not extendable once attached).
+ */
+export const freshnessShape = {
+  fresh: booleanParam,
+  stale: booleanParam,
+} as const;
+
+/**
+ * Refuses `fresh` and `stale` together.
+ *
+ * Not a preference to resolve but a contradiction — "buy me a new answer" and
+ * "spend nothing" — so the pair is a 422 rather than a silent ranking. Ranking
+ * would be worse than either behaviour it could pick: a UI that sent both by
+ * accident would either bill on every history click or never refresh, and both
+ * failures are invisible until the bill arrives.
+ */
+export function withFreshness<
+  T extends z.ZodType<{ fresh?: boolean | undefined; stale?: boolean | undefined }>,
+>(schema: T) {
+  return schema.refine(
+    (query) => !(query.fresh === true && query.stale === true),
+    {
+      message:
+        "`fresh` buys a new answer and `stale` refuses to spend — send at most one.",
+      path: ["stale"],
+    },
+  );
+}
+
+/** What the freshness pair resolves to for the DataForSEO client. */
+export interface Freshness {
+  fresh?: boolean;
+  allowStale?: boolean;
+}
+
+/**
+ * The validated pair as the client's own option names.
+ *
+ * A separate function rather than a rename at each call site, because `stale`
+ * and `allowStale` are deliberately different words: the query parameter is a
+ * request ("give me the stale one") and the client option is a permission
+ * ("you may serve a stale one, if there is one"). Collapsing them would make
+ * the fall-through-and-bill case look like a bug.
+ */
+export function toFreshness(query: {
+  fresh?: boolean;
+  stale?: boolean;
+}): Freshness {
+  return { fresh: query.fresh, allowStale: query.stale };
+}
+
 /** The market half of every research query. */
 export const marketQuerySchema = z.object({
   workspace: workspaceParam,

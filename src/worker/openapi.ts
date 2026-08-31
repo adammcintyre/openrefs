@@ -861,7 +861,24 @@ const PARAMETERS: Record<string, ParameterObject> = {
       description:
         "Bypass the cache and buy a new answer. `?fresh`, `?fresh=true` and " +
         "`?fresh=1` all mean true. Costs money every time — omit it unless the " +
-        "user asked for a refresh.",
+        "user asked for a refresh. Cannot be combined with `stale`: the two are " +
+        "opposite instructions, so sending both is a 422.",
+    },
+  ),
+  StaleQuery: queryParam(
+    "stale",
+    { type: "boolean" },
+    {
+      description:
+        "Serve the cached answer **even past its normal lifetime**, spending " +
+        "nothing and making no provider call. This is how a search is re-opened " +
+        "from `/history` for free; the response carries `stale: true` and a " +
+        "`fetchedAt` saying how old it really is.\n\n" +
+        "A permission rather than a demand: with nothing cached — never fetched, " +
+        "or older than the 90-day hard cap, at which point the entry is deleted " +
+        "on read — the request falls through to a normal billed fetch. So a " +
+        "search re-opened after 90 days costs what a new one costs.\n\n" +
+        "Cannot be combined with `fresh` (422).",
     },
   ),
 };
@@ -956,14 +973,24 @@ const SCHEMAS: Record<string, JsonSchema> = {
       costUsd: num("USD billed for this response. Always 0 when `cached` is true."),
       cached: bool("True when the answer came from cache rather than the provider."),
       stale: bool(
-        "True when the cache entry served had already passed its normal lifetime " +
-          "and was returned because refreshing it timed out upstream. `cached` is " +
-          "true alongside it. Never set on a `fresh=true` request, which must fail " +
-          "rather than return the copy the caller paid to bypass. Absent means false.",
+        "True when the cache entry served had already passed its normal lifetime. " +
+          "Two paths set it: refreshing it timed out upstream, or the caller asked " +
+          "for the old copy outright with `stale=true`. `cached` is true alongside " +
+          "it. Never set on a `fresh=true` request, which must fail rather than " +
+          "return the copy the caller paid to bypass. Absent means false.",
+      ),
+      fetchedAt: nullableStr(
+        "When the underlying payload was fetched from the provider, ISO 8601 UTC. " +
+          "On a cache hit this is the **original** fetch, not this request — it is " +
+          "the date behind an “Updated N days ago” chip next to a Refresh " +
+          "button. Nullable because one endpoint (`/keywords/serp`) reports the " +
+          "provider's own crawl time instead, which the provider can omit, and " +
+          "because a composed response with no leg reporting one has no honest " +
+          "answer. Absent on endpoints not yet threaded.",
       ),
     },
     {
-      optional: ["stale"],
+      optional: ["stale", "fetchedAt"],
       description:
         "What a DataForSEO-backed answer cost, attached to every such payload.",
     },
@@ -3196,6 +3223,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse("KeywordOverviewResponse", "The keyword's metrics."),
@@ -3215,6 +3243,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3236,6 +3265,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3260,6 +3290,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
         queryParam("depth", { type: "integer", minimum: 0 }, {
@@ -3286,6 +3317,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         queryParam("device", enumOf(["desktop", "mobile"]), {
           description: "Which device's results to read.",
         }),
@@ -3313,6 +3345,7 @@ const PATHS: Record<string, PathItem> = {
             "because a path turns this into a far narrower page-level query.",
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse("DomainOverviewResponse", "The domain's metrics."),
@@ -3335,6 +3368,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         isoDateParam("dateFrom", "Inclusive start, `yyyy-mm-dd`."),
         isoDateParam("dateTo", "Inclusive end, `yyyy-mm-dd`."),
       ],
@@ -3362,6 +3396,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
         queryParam("paid", { type: "boolean" }, {
@@ -3390,6 +3425,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
       ],
       responses: {
@@ -3412,6 +3448,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
       ],
       responses: {
@@ -3446,6 +3483,7 @@ const PATHS: Record<string, PathItem> = {
         parameterRef("LanguageQuery"),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse(
@@ -3704,6 +3742,7 @@ const PATHS: Record<string, PathItem> = {
           { description: "Filters rows already fetched. Free to change." },
         ),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3737,6 +3776,7 @@ const PATHS: Record<string, PathItem> = {
         }),
         queryParam("mode", { $ref: "#/components/schemas/GapMode", default: "missing" }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         queryParam(
           "limit",
           { type: "integer", minimum: 1, maximum: MAX_LIMIT },
@@ -3779,6 +3819,7 @@ const PATHS: Record<string, PathItem> = {
             "upstream default applies.",
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
