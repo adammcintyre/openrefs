@@ -45,6 +45,7 @@ docs/              this file, PLAN.md, feature specs
 - `api_keys` (id, workspace_id, name, key_hash, created_at, last_used_at)
 - `projects` (id, workspace_id, domain, name, location_code, language_code, settings_json)
 - `collections` (id, workspace_id, name) / `collection_keywords` (collection_id, keyword, volume_snapshot, added_at)
+- `search_history` (id, workspace_id, module, query_key, params, summary, hit_count, first_searched_at, last_searched_at) — one row per distinct search per module, upserted on `query_key` (sha256 of the canonical params), pruned to the newest 100 per workspace+module
 - `tracked_keywords` (id, project_id, keyword, location_code, language_code, device)
 - `rank_snapshots` (tracked_keyword_id, date, position, url, serp_features_json)
 - `audits` (id, project_id, dfs_task_id, status, summary_json, created_at) — raw pages to R2
