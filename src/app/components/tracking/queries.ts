@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AddTrackedKeywordsBody,
   RankCheckEnqueuedResponse,
+  RankSummaryResponse,
   RemoveTrackedKeywordsBody,
   TrackedKeywordsAddedResponse,
   TrackedKeywordsRemovedResponse,
@@ -37,10 +38,23 @@ import { projectKeys } from "../projects/queries";
  */
 export const CHECK_POLL_INTERVAL_MS = 15_000;
 
+/**
+ * The overview chart's window, in days. Both are offered as a toggle: 30 is
+ * "what has this month done", 90 is "is the trend real".
+ */
+export const RANK_SUMMARY_RANGES = [30, 90] as const;
+export type RankSummaryRange = (typeof RANK_SUMMARY_RANGES)[number];
+export const DEFAULT_RANK_SUMMARY_RANGE: RankSummaryRange = 30;
+
+/** The rollup is D1-only, so five minutes of client cache costs nothing. */
+const SUMMARY_STALE_TIME = 5 * 60_000;
+
 export const trackingKeys = {
   all: ["tracking"] as const,
   keywords: (workspaceId: string, projectId: string) =>
     ["tracking", "keywords", workspaceId, projectId] as const,
+  summary: (workspaceId: string, projectId: string, days: number) =>
+    ["tracking", "summary", workspaceId, projectId, days] as const,
 };
 
 function scoped(workspaceId: string | null, projectId: string | null): string {
@@ -65,6 +79,52 @@ export function useTrackedKeywords(
         ? CHECK_POLL_INTERVAL_MS
         : false,
   });
+}
+
+/**
+ * The overview chart's series: one row per day of `rank_snapshots`, rolled up.
+ *
+ * Free in the strictest sense — the Worker derives every point from D1 and
+ * there is no `ResultMeta` on the response at all — so this keeps the app-wide
+ * retry default and a modest `staleTime`, unlike every DataForSEO-backed hook
+ * in the codebase.
+ *
+ * **Days can be missing.** A project first checked on a Tuesday has no Monday
+ * row, so the points are not evenly spaced and index is not a date. Anything
+ * consuming this must read `point.date`.
+ */
+export function useRankSummary(
+  workspaceId: string | null,
+  projectId: string | null,
+  days: number,
+) {
+  return useQuery({
+    queryKey: trackingKeys.summary(workspaceId ?? "", projectId ?? "", days),
+    queryFn: () => fetchRankSummary(workspaceId, projectId, days),
+    enabled: workspaceId !== null && projectId !== null,
+    staleTime: SUMMARY_STALE_TIME,
+  });
+}
+
+/**
+ * The request behind the hook, split out so the path this package agreed with
+ * the Worker can be asserted without mounting anything.
+ *
+ * The project id is percent-encoded: it lands in a path segment, and an id is
+ * not something to trust into a URL unescaped.
+ */
+export function fetchRankSummary(
+  workspaceId: string | null,
+  projectId: string | null,
+  days: number,
+): Promise<RankSummaryResponse> {
+  const params = new URLSearchParams({
+    workspace: workspaceId ?? "",
+    days: String(days),
+  });
+  return api.get<RankSummaryResponse>(
+    `/projects/${encodeURIComponent(projectId ?? "")}/rank/summary?${params}`,
+  );
 }
 
 /**

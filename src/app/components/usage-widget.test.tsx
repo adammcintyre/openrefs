@@ -39,6 +39,7 @@ function workspace(spendCapUsd: number): Workspace {
 const USAGE: UsageResponse = {
   totalUsd: 7.41,
   requestCount: 214,
+  cacheHitRate: 0.62,
   byEndpoint: [
     {
       endpoint: "dataforseo_labs/google/domain_rank_overview/live",
