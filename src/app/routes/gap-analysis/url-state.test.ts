@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import { GAP_MAX_PAGES } from "../../../shared/gap";
 import {
   DEFAULT_MARKET,
+  gapPagesKey,
   gapSearchKey,
   gapSearchParams,
+  isGapPagesSearchable,
   isGapSearchable,
+  parsePageList,
   readGapSearch,
 } from "./url-state";
 
@@ -21,6 +25,8 @@ describe("readGapSearch", () => {
       location: 2840,
       language: "en",
       mode: "weak",
+      view: "keywords",
+      pages: [],
     });
   });
 
@@ -95,8 +101,13 @@ describe("gapSearchParams", () => {
       location: 2826,
       language: "en",
       mode: "missing",
+      view: "keywords",
+      pages: [],
     });
     expect(params.get("mode")).toBeNull();
+    // The keyword view is the default too, so its URLs are unchanged by the
+    // pages retrofit.
+    expect(params.get("view")).toBeNull();
     expect(params.toString()).toBe(
       "target=brandpacks.com&competitors=hikelist.com&location=2826&language=en",
     );
@@ -110,8 +121,31 @@ describe("gapSearchParams", () => {
         location: 2826,
         language: "en",
         mode: "missing",
+        view: "keywords",
+        pages: [],
       }).toString(),
     ).toBe("");
+  });
+
+  /*
+   * The pages view has no target and no competitors, so the "nothing to
+   * describe" early return has to count the page list too — otherwise a pages
+   * comparison serialises to an empty URL and is lost on reload.
+   */
+  it("writes a pages comparison that has no target or competitors", () => {
+    const params = gapSearchParams({
+      target: "",
+      competitors: [],
+      location: 2826,
+      language: "en",
+      mode: "missing",
+      view: "pages",
+      pages: ["https://example.com/a", "https://rival.com/b"],
+    });
+    expect(params.get("pages")).toBe(
+      "https://example.com/a,https://rival.com/b",
+    );
+    expect(params.get("view")).toBe("pages");
   });
 
   it("normalises on the way out, not only on the way in", () => {
@@ -121,6 +155,8 @@ describe("gapSearchParams", () => {
       location: 2826,
       language: "en",
       mode: "all",
+      view: "keywords",
+      pages: [],
     });
     expect(params.get("target")).toBe("brandpacks.com");
     // The duplicate collapses rather than buying the same column twice.
@@ -130,7 +166,13 @@ describe("gapSearchParams", () => {
 });
 
 describe("isGapSearchable", () => {
-  const base = { location: 2826, language: "en", mode: "missing" } as const;
+  const base = {
+    location: 2826,
+    language: "en",
+    mode: "missing" as const,
+    view: "keywords" as const,
+    pages: [] as string[],
+  };
 
   it("needs a real domain and at least one competitor", () => {
     expect(
@@ -150,6 +192,139 @@ describe("isGapSearchable", () => {
     ).toBe(false);
     expect(isGapSearchable({ ...base, target: "", competitors: ["a.com"] })).toBe(
       false,
+    );
+  });
+});
+
+describe("parsePageList", () => {
+  it("accepts newline- or comma-separated URLs", () => {
+    expect(parsePageList("https://a.com/x\nhttps://b.com/y")).toEqual([
+      "https://a.com/x",
+      "https://b.com/y",
+    ]);
+    expect(parsePageList("https://a.com/x, https://b.com/y")).toEqual([
+      "https://a.com/x",
+      "https://b.com/y",
+    ]);
+  });
+
+  /*
+   * These strings become hrefs in the table's column headers. They came from
+   * the user's own paste box rather than a scrape, but they reach the attribute
+   * the same way — and `page_intersection` has nothing to say about them either.
+   */
+  it("drops anything that is not http(s)", () => {
+    expect(parsePageList("javascript:alert(1)")).toEqual([]);
+    expect(parsePageList("data:text/html,x")).toEqual([]);
+    expect(parsePageList("example.com/no-scheme")).toEqual([]);
+  });
+
+  it("ignores blank lines and stray whitespace", () => {
+    expect(parsePageList("\n  https://a.com/x  \n\n")).toEqual([
+      "https://a.com/x",
+    ]);
+  });
+
+  it("collapses duplicates rather than buying the same column twice", () => {
+    expect(parsePageList("https://a.com/x\nhttps://a.com/x")).toEqual([
+      "https://a.com/x",
+    ]);
+  });
+
+  it("caps at the API's own ceiling instead of being refused upstream", () => {
+    const many = Array.from(
+      { length: GAP_MAX_PAGES + 5 },
+      (_, i) => `https://a.com/${i}`,
+    ).join("\n");
+    expect(parsePageList(many)).toHaveLength(GAP_MAX_PAGES);
+  });
+
+  /*
+   * Unlike a domain, a page URL is NOT normalised: page_intersection compares
+   * exact addresses, so stripping a trailing slash or a query string would
+   * quietly compare a different page from the one that was pasted.
+   */
+  it("preserves the exact address, query string and all", () => {
+    expect(parsePageList("https://a.com/x?p=12")).toEqual([
+      "https://a.com/x?p=12",
+    ]);
+  });
+});
+
+describe("readGapSearch — the pages view", () => {
+  it("defaults to the keyword view", () => {
+    expect(read("target=a.com").view).toBe("keywords");
+    expect(read("target=a.com&view=nonsense").view).toBe("keywords");
+  });
+
+  it("reads the view and its page list", () => {
+    const search = read("view=pages&pages=https://a.com/x,https://b.com/y");
+    expect(search.view).toBe("pages");
+    expect(search.pages).toEqual(["https://a.com/x", "https://b.com/y"]);
+  });
+
+  it("round-trips a pages comparison", () => {
+    const search = read(
+      "view=pages&pages=https://a.com/x,https://b.com/y&location=2840&language=en",
+    );
+    expect(readGapSearch(gapSearchParams(search))).toEqual(search);
+  });
+});
+
+describe("isGapPagesSearchable", () => {
+  const base = {
+    target: "",
+    competitors: [] as string[],
+    location: 2826,
+    language: "en",
+    mode: "missing" as const,
+    view: "pages" as const,
+  };
+
+  it("needs at least one URL", () => {
+    expect(isGapPagesSearchable({ ...base, pages: [] })).toBe(false);
+  });
+
+  /*
+   * One page is a legitimate question — "what does this page rank for?" — and
+   * the API accepts it, so it is not refused. The screen explains what the view
+   * is for instead.
+   */
+  it("accepts a single page rather than insisting on a comparison", () => {
+    expect(isGapPagesSearchable({ ...base, pages: ["https://a.com/x"] })).toBe(
+      true,
+    );
+  });
+});
+
+describe("gapPagesKey", () => {
+  const base = {
+    target: "brandpacks.com",
+    competitors: ["a.com"],
+    location: 2826,
+    language: "en",
+    mode: "missing" as const,
+    view: "pages" as const,
+    pages: ["https://a.com/x"],
+  };
+
+  /*
+   * The two views share a market and nothing else. Changing the keyword
+   * comparison must not read as a changed pages comparison, or switching tabs
+   * would refetch the other view for no reason.
+   */
+  it("ignores the keyword view's target and competitors", () => {
+    expect(
+      gapPagesKey({ ...base, target: "other.com", competitors: ["z.com"] }),
+    ).toBe(gapPagesKey(base));
+  });
+
+  it("changes with the page list and with the market", () => {
+    expect(gapPagesKey({ ...base, pages: ["https://b.com/y"] })).not.toBe(
+      gapPagesKey(base),
+    );
+    expect(gapPagesKey({ ...base, location: 2840 })).not.toBe(
+      gapPagesKey(base),
     );
   });
 });

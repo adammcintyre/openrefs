@@ -19,7 +19,11 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import type { GapKeywordRow, GapKeywordsResponse } from "../../../shared/gap";
+import type {
+  GapKeywordRow,
+  GapKeywordsResponse,
+  GapPagesResponse,
+} from "../../../shared/gap";
 import type { MetaLocationsResponse } from "../../../shared/keywords";
 import type { Workspace } from "../../../shared/workspaces";
 import { ToastProvider } from "../../components/ui/toast";
@@ -136,14 +140,44 @@ const ALL_FILTERED: GapKeywordsResponse = {
   limit: 20,
 };
 
-function seededClient(): QueryClient {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  client.setQueryData(["workspaces"], WORKSPACES);
-  client.setQueryData(["meta", "locations", WORKSPACE_ID], LOCATIONS);
+/** The compared URLs for the pages view — two rivals on the same subject. */
+const PAGES = ["https://brandpacks.com/guide", "https://hikelist.com/guide"];
 
-  const key = (mode: string) => [
+const PAGES_RESPONSE: GapPagesResponse = {
+  pages: PAGES,
+  locationCode: 2826,
+  languageCode: "en",
+  items: [
+    {
+      keyword: "photo booth guide",
+      searchVolume: 480,
+      cpc: 0.9,
+      competition: null,
+      competitionLevel: "LOW",
+      keywordDifficulty: 21,
+      intent: "informational",
+      pages: [
+        {
+          domain: PAGES[0] as string,
+          position: 4,
+          url: PAGES[0] as string,
+          traffic: 88,
+        },
+        // The second page does not rank for this keyword — a dash, not a zero.
+        { domain: PAGES[1] as string, position: null, url: null, traffic: null },
+      ],
+    },
+  ],
+  totalCount: 37,
+  itemsCount: 1,
+  limit: 50,
+  offset: 0,
+  costUsd: 0.012,
+  cached: false,
+};
+
+export function gapKeywordsKey(mode: string) {
+  return [
     "gap",
     "keywords",
     WORKSPACE_ID,
@@ -154,20 +188,42 @@ function seededClient(): QueryClient {
     mode,
     {},
   ];
+}
+
+function seededClient(
+  overrides: Array<[readonly unknown[], unknown]> = [],
+): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(["workspaces"], WORKSPACES);
+  client.setQueryData(["meta", "locations", WORKSPACE_ID], LOCATIONS);
 
   for (const mode of ["missing", "all"] as const) {
-    client.setQueryData(key(mode), {
+    client.setQueryData(gapKeywordsKey(mode), {
       pages: [gapResponse(mode)],
       pageParams: [0],
     });
   }
-  client.setQueryData(key("weak"), { pages: [ALL_FILTERED], pageParams: [0] });
+  client.setQueryData(gapKeywordsKey("weak"), {
+    pages: [ALL_FILTERED],
+    pageParams: [0],
+  });
+  client.setQueryData(
+    ["gap", "pages", WORKSPACE_ID, PAGES.join(","), 2826, "en"],
+    { pages: [PAGES_RESPONSE], pageParams: [0] },
+  );
+
+  for (const [key, value] of overrides) client.setQueryData(key, value);
   return client;
 }
 
-function render(url: string): string {
+function render(
+  url: string,
+  overrides: Array<[readonly unknown[], unknown]> = [],
+): string {
   return renderToString(
-    <QueryClientProvider client={seededClient()}>
+    <QueryClientProvider client={seededClient(overrides)}>
       <MemoryRouter initialEntries={[url]}>
         <ToastProvider>
           <Routes>
@@ -286,5 +342,105 @@ describe("a page the mode filtered empty", () => {
     );
     expect(html).toContain("the next page may hold more");
     expect(html).toContain("0 shown of 51 compared");
+  });
+});
+
+/**
+ * Retrofit: the Pages view.
+ *
+ * A different endpoint, a different input and a different table from the
+ * keyword views — and crucially no mode, because `missing` and `weak` are
+ * defined against a target and this comparison has no "you".
+ */
+describe("the pages view", () => {
+  it("is offered alongside the keyword view", () => {
+    const html = render(COMPARISON);
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain(">Pages</button>");
+    expect(html).toContain(">Keywords</button>");
+  });
+
+  it("explains itself before it will spend", () => {
+    const html = render("/app/gap-analysis?view=pages");
+    expect(html).toContain("Compare pages, not domains");
+    expect(html).toContain("this one has no “you”");
+  });
+
+  it("says the URLs are compared exactly, and how many fit", () => {
+    const html = render("/app/gap-analysis?view=pages");
+    expect(html).toContain("compared as exact pages");
+    expect(html).toContain("up to 20");
+  });
+
+  describe("with a comparison", () => {
+    const html = render(
+      `/app/gap-analysis?view=pages&pages=${PAGES.join(",")}&location=2826&language=en`,
+    );
+
+    it("renders a column per compared page, in the order requested", () => {
+      expect(html).toContain("Page 1");
+      expect(html).toContain("Page 2");
+      // Paths, not whole URLs — twenty absolute URLs across a header row is
+      // unreadable — with the full address in a title.
+      expect(html).toContain("/guide");
+      expect(html).toContain('title="https://brandpacks.com/guide"');
+    });
+
+    it("renders the shared keywords with their metrics", () => {
+      expect(html).toContain("photo booth guide");
+      expect(html).toContain("480");
+    });
+
+    /** The same rule as the keyword table: absent is a dash, never a zero. */
+    it("renders a page that does not rank as a dash", () => {
+      expect(html).toContain("This page does not rank for this keyword");
+    });
+
+    it("prices the view honestly — one call for the whole set", () => {
+      expect(html).toContain(
+        "one DataForSEO call for the whole set, however many pages are in it",
+      );
+    });
+
+    it("counts what is loaded against the total", () => {
+      expect(html).toContain("1 shown of 37");
+    });
+  });
+});
+
+/**
+ * Retrofit: the `missing` dead end.
+ *
+ * An empty `missing` is the most common one on this screen — it needs *every*
+ * rival to rank. The fix is one tab away, and taking it is free: both modes
+ * issue the identical upstream query (`upstreamQueriesForMode` in
+ * src/worker/routes/gap.ts) and differ only in the row filter after it.
+ */
+describe("an empty Missing result", () => {
+  const html = render(COMPARISON, [
+    [
+      gapKeywordsKey("missing"),
+      {
+        pages: [
+          { ...gapResponse("missing"), items: [], itemsCount: 0, filteredOut: 0 },
+        ],
+        pageParams: [0],
+      },
+    ],
+  ]);
+
+  it("offers a one-click switch to the broader view", () => {
+    expect(html).toContain("Show Untapped instead");
+  });
+
+  it("explains why Untapped is broader, and that switching is free", () => {
+    expect(html).toContain("it only needs one of them to rank");
+    expect(html).toContain("costs nothing");
+  });
+
+  it("does not offer the switch from the other modes", () => {
+    expect(render(`${COMPARISON}&mode=weak`)).not.toContain(
+      "Show Untapped instead",
+    );
   });
 });
