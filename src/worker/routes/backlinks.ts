@@ -29,7 +29,6 @@ import type {
   BacklinksListMode,
   BacklinksListResponse,
   BacklinksScoresResponse,
-  BacklinksSummaryResponse,
   ReferringDomainsResponse,
 } from "../../shared/backlinks";
 import {
@@ -54,6 +53,7 @@ import {
 } from "../lib/research";
 import { readJson, readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
+import { backlinksSummary } from "../services/backlinks";
 import type { AppEnv } from "../types";
 
 const backlinks = new Hono<AppEnv>();
@@ -146,45 +146,14 @@ const ANCHORS_BY_BACKLINKS: LabsSort[] = [
 /**
  * GET /api/v1/backlinks/summary
  *
- * The MetricCard strip: Domain Score, backlinks, referring domains, dofollow
- * share, broken links.
+ * The body lives in `../services/backlinks` because the MCP server exposes the
+ * same thing as the `backlinks_summary` tool, and one mapper is what keeps the
+ * two answers identical.
  */
 backlinks.get("/summary", async (c) => {
   const query = readQuery(c, targetQuerySchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  const dfs = await createDataForSeoApi(c.env, db, query.workspace);
-
-  const result = await dfs.backlinks.summaryLive({
-    target: query.target,
-    fresh: query.fresh,
-  });
-
-  const body: BacklinksSummaryResponse = {
-    target: result.target,
-    domainScore: result.domainScore,
-    backlinks: result.backlinks,
-    referringDomains: result.referringDomains,
-    referringMainDomains: result.referringMainDomains,
-    referringPages: result.referringPages,
-    dofollow: result.dofollow,
-    brokenBacklinks: result.brokenBacklinks,
-    brokenPages: result.brokenPages,
-    crawledPages: result.crawledPages,
-    internalLinksCount: result.internalLinksCount,
-    externalLinksCount: result.externalLinksCount,
-    referringIps: result.referringIps,
-    referringSubnets: result.referringSubnets,
-    spamScore: result.spamScore,
-    firstSeen: result.firstSeen,
-    lostDate: result.lostDate,
-    server: result.server,
-    countryIsoCode: result.countryIsoCode,
-    linkAttributes: result.linkAttributes,
-    linkTypes: result.linkTypes,
-    costUsd: result.costUsd,
-    cached: result.cached,
-  };
-  return c.json(body);
+  return c.json(await backlinksSummary(c.env, db, query));
 });
 
 /**

@@ -13,31 +13,41 @@
  * collection id from another tenant reads as "not found" rather than leaking
  * its existence.
  */
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 
 import type {
   CollectionDeletedResponse,
   CollectionDetailResponse,
-  CollectionKeywordsAddedResponse,
   CollectionKeywordsRemovedResponse,
-  CollectionListResponse,
   CollectionMutationResponse,
-  CollectionSummary,
 } from "../../shared/collections";
 import {
   COLLECTION_KEYWORDS_BULK_MAX,
   COLLECTION_NAME_MAX_LENGTH,
 } from "../../shared/collections";
-import type { Db } from "../../db";
 import { collectionKeywords, collections } from "../../db";
 import { ApiException } from "../http";
 import { attachmentHeader, slugify, toCsv } from "../lib/csv";
 import { authorizeWorkspace, workspaceParam } from "../lib/research";
 import { readJson, readParams, readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
+import {
+  addKeywordsToCollection,
+  countKeywords,
+  listCollections,
+  normalizeKeyword,
+  requireCollection,
+} from "../services/collections";
 import type { AppEnv } from "../types";
+
+/*
+ * Re-exported because `collections.test.ts` imports them from this module and
+ * because they are part of this module's public shape, even though they now
+ * live beside the handler bodies in ../services/collections.
+ */
+export { dedupeKeywordEntries, normalizeKeyword } from "../services/collections";
 
 const collectionsRouter = new Hono<AppEnv>();
 
@@ -110,28 +120,7 @@ const bulkRemoveSchema = z.object({
 collectionsRouter.get("/", async (c) => {
   const { workspace } = readQuery(c, workspaceQuerySchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), workspace);
-
-  // One grouped query rather than N+1: the count comes back with the row.
-  const rows = await db
-    .select({
-      id: collections.id,
-      name: collections.name,
-      createdAt: collections.createdAt,
-      keywordCount: count(collectionKeywords.keyword),
-    })
-    .from(collections)
-    .leftJoin(
-      collectionKeywords,
-      eq(collectionKeywords.collectionId, collections.id),
-    )
-    .where(eq(collections.workspaceId, workspace))
-    .groupBy(collections.id)
-    .orderBy(desc(collections.createdAt));
-
-  const body: CollectionListResponse = {
-    collections: rows.map(toSummary),
-  };
-  return c.json(body);
+  return c.json(await listCollections(db, workspace));
 });
 
 collectionsRouter.post("/", async (c) => {
@@ -251,57 +240,16 @@ collectionsRouter.delete("/:id", async (c) => {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Bulk add, idempotent.
- *
- * `onConflictDoNothing` against the (collection_id, keyword) primary key: a
- * keyword already in the collection is skipped silently rather than erroring
- * or overwriting. That last part is deliberate — the volume snapshot records
- * what the keyword looked like when it was first saved, so a re-add must not
- * quietly move it. Adding the same list twice is a no-op, which is what makes
- * a "select all → add" button safe to double-click.
+ * Bulk add, idempotent. The body lives in `../services/collections` because
+ * `add_keywords_to_collection` is also an MCP tool.
  */
 collectionsRouter.post("/:id/keywords", async (c) => {
   const { workspace } = readQuery(c, workspaceQuerySchema);
   const { id } = readParams(c, idParamSchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), workspace);
-  const { keywords, location, language } = await readJson(c, bulkAddSchema);
+  const input = await readJson(c, bulkAddSchema);
 
-  await requireCollection(db, workspace, id);
-
-  const entries = dedupeKeywordEntries(keywords);
-  const before = await countKeywords(db, id);
-
-  await db
-    .insert(collectionKeywords)
-    .values(
-      entries.map((entry) => ({
-        collectionId: id,
-        keyword: entry.keyword,
-        volumeSnapshot: entry.volumeSnapshot ?? null,
-        // Stamped from the request, null when the caller had no market to
-        // give. Note this rides on `onConflictDoNothing` below: re-adding an
-        // existing keyword from a different market does NOT restamp it, for
-        // the same reason it does not overwrite the volume snapshot — the
-        // first save is the one the snapshot belongs to.
-        locationCode: location ?? null,
-        languageCode: language ?? null,
-      })),
-    )
-    .onConflictDoNothing();
-
-  // Counting rather than trusting a driver-reported row count: D1's changes()
-  // is not exposed uniformly through Drizzle, and the difference is the only
-  // number we can state honestly.
-  const after = await countKeywords(db, id);
-  const added = after - before;
-
-  const body: CollectionKeywordsAddedResponse = {
-    added,
-    skipped: entries.length - added,
-    submitted: entries.length,
-    keywordCount: after,
-  };
-  return c.json(body);
+  return c.json(await addKeywordsToCollection(db, workspace, id, input));
 });
 
 collectionsRouter.delete("/:id/keywords", async (c) => {
@@ -385,85 +333,5 @@ collectionsRouter.get("/:id/export.csv", async (c) => {
     "cache-control": "no-store",
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                     */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Loads a collection, scoped to the workspace.
- *
- * The workspace predicate is what makes a valid id from another tenant a 404
- * rather than a read. Every route that touches a collection goes through here
- * before it does anything else.
- */
-async function requireCollection(
-  db: Db,
-  workspaceId: string,
-  id: string,
-): Promise<{ id: string; name: string; createdAt: Date }> {
-  const [row] = await db
-    .select({
-      id: collections.id,
-      name: collections.name,
-      createdAt: collections.createdAt,
-    })
-    .from(collections)
-    .where(and(eq(collections.id, id), eq(collections.workspaceId, workspaceId)))
-    .limit(1);
-
-  if (row === undefined) {
-    throw new ApiException("not_found", "No such collection.");
-  }
-  return row;
-}
-
-async function countKeywords(db: Db, collectionId: string): Promise<number> {
-  const [row] = await db
-    .select({ total: sql<number>`count(*)` })
-    .from(collectionKeywords)
-    .where(eq(collectionKeywords.collectionId, collectionId));
-  return Number(row?.total ?? 0);
-}
-
-function toSummary(row: {
-  id: string;
-  name: string;
-  createdAt: Date;
-  keywordCount: number;
-}): CollectionSummary {
-  return {
-    id: row.id,
-    name: row.name,
-    keywordCount: Number(row.keywordCount ?? 0),
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-/** Lowercased and trimmed — the form the primary key dedupes on. */
-export function normalizeKeyword(keyword: string): string {
-  return keyword.trim().toLowerCase();
-}
-
-/**
- * De-duplicates a bulk add before it reaches SQLite.
- *
- * Necessary, not merely tidy: SQLite rejects an INSERT whose own VALUES list
- * repeats a primary key, and `ON CONFLICT DO NOTHING` does not save it — the
- * conflict is within the statement, not with the table. A UI sending
- * "seo tools" and "SEO Tools" together would otherwise fail the whole batch.
- * First occurrence wins, so the earliest snapshot is the one kept.
- */
-export function dedupeKeywordEntries(
-  entries: readonly { keyword: string; volumeSnapshot?: number | null }[],
-): { keyword: string; volumeSnapshot: number | null }[] {
-  const seen = new Map<string, { keyword: string; volumeSnapshot: number | null }>();
-  for (const entry of entries) {
-    const keyword = normalizeKeyword(entry.keyword);
-    if (keyword === "" || seen.has(keyword)) continue;
-    seen.set(keyword, { keyword, volumeSnapshot: entry.volumeSnapshot ?? null });
-  }
-  return [...seen.values()];
-}
 
 export default collectionsRouter;

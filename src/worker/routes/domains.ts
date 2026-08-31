@@ -17,20 +17,11 @@ import type {
   DomainCountriesResponse,
   DomainCountryRow,
   DomainHistoryResponse,
-  DomainKeywordsResponse,
-  DomainOverviewResponse,
   DomainPagesResponse,
-  RankMetrics,
 } from "../../shared/domains";
 import { createDataForSeoApi } from "../dataforseo";
-import type { DataForSeoApi, LabsRankMetrics } from "../dataforseo";
-import {
-  containsFilter,
-  RANKED_KEYWORDS_FIELDS,
-  RELEVANT_PAGES_FIELDS,
-} from "../dataforseo";
-import type { LabsFilter } from "../dataforseo/filters";
-import { rangeFilters } from "../dataforseo/filters";
+import type { DataForSeoApi } from "../dataforseo";
+import { RELEVANT_PAGES_FIELDS } from "../dataforseo";
 import { readQuery } from "../lib/validate";
 import {
   authorizeWorkspace,
@@ -41,6 +32,7 @@ import {
   rangeQuerySchema,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
+import { domainKeywords, domainOverview, toRankMetrics } from "../services/domains";
 import type { AppEnv } from "../types";
 
 const domains = new Hono<AppEnv>();
@@ -98,41 +90,27 @@ const domainQuerySchema = marketQuerySchema.extend({
 
 const listQuerySchema = domainQuerySchema.extend(pagingQuerySchema.shape);
 
-/** Upstream metrics to the shared shape. Renames `etv` to what it means. */
-function toRankMetrics(metrics: LabsRankMetrics): RankMetrics {
-  return {
-    keywordCount: metrics.count,
-    traffic: metrics.etv,
-    trafficValueUsd: metrics.estimatedPaidTrafficCostUsd,
-    positions: metrics.positions,
-    isNew: metrics.isNew,
-    isUp: metrics.isUp,
-    isDown: metrics.isDown,
-    isLost: metrics.isLost,
-  };
-}
+/**
+ * The two views the MCP server also exposes as tools. Their bodies live in
+ * `../services/domains` so the tool and the endpoint cannot drift; everything
+ * else in this file has exactly one caller and stays inline.
+ */
+export const domainOverviewQuerySchema = domainQuerySchema;
 
-domains.get("/overview", async (c) => {
-  const query = readQuery(c, domainQuerySchema);
-  const { dfs } = await open(c.env, c.get("session"), query.workspace);
-
-  const result = await dfs.labs.googleDomainRankOverviewLive({
-    target: query.domain,
-    locationCode: query.location,
-    languageCode: query.language,
-    fresh: query.fresh,
+export const domainKeywordsQuerySchema = listQuerySchema
+  .extend(rangeQuerySchema.shape)
+  .extend({
+    paid: booleanParam,
+    minPosition: z.coerce.number().int().min(1).optional(),
+    maxPosition: z.coerce.number().int().min(1).optional(),
+    include: z.string().trim().min(1).optional(),
+    exclude: z.string().trim().min(1).optional(),
   });
 
-  const body: DomainOverviewResponse = {
-    domain: query.domain,
-    locationCode: query.location,
-    languageCode: query.language,
-    organic: toRankMetrics(result.organic),
-    paid: toRankMetrics(result.paid),
-    costUsd: result.costUsd,
-    cached: result.cached,
-  };
-  return c.json(body);
+domains.get("/overview", async (c) => {
+  const query = readQuery(c, domainOverviewQuerySchema);
+  const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
+  return c.json(await domainOverview(c.env, db, query));
 });
 
 domains.get("/history", async (c) => {
@@ -174,91 +152,10 @@ domains.get("/history", async (c) => {
   return c.json(body);
 });
 
-/**
- * GET /api/v1/domains/keywords
- *
- * `paid=true` is not a client-side filter over a shared result set: it changes
- * `item_types` upstream. DataForSEO refuses to sort or filter by a result type
- * that was not requested, so asking for the default and filtering for paid
- * would return nothing. The two views are separate queries, separately cached.
- */
 domains.get("/keywords", async (c) => {
-  const query = readQuery(
-    c,
-    listQuerySchema.extend(rangeQuerySchema.shape).extend({
-      paid: booleanParam,
-      minPosition: z.coerce.number().int().min(1).optional(),
-      maxPosition: z.coerce.number().int().min(1).optional(),
-      include: z.string().trim().min(1).optional(),
-      exclude: z.string().trim().min(1).optional(),
-    }),
-  );
-  const { dfs } = await open(c.env, c.get("session"), query.workspace);
-
-  const paid = query.paid === true;
-  const filters: LabsFilter[] = [
-    ...rangeFilters(
-      RANKED_KEYWORDS_FIELDS.searchVolume,
-      query.minVolume,
-      query.maxVolume,
-    ),
-    ...rangeFilters(
-      RANKED_KEYWORDS_FIELDS.keywordDifficulty,
-      query.minDifficulty,
-      query.maxDifficulty,
-    ),
-    ...rangeFilters(
-      RANKED_KEYWORDS_FIELDS.position,
-      query.minPosition,
-      query.maxPosition,
-    ),
-    ...(query.include
-      ? [containsFilter(RANKED_KEYWORDS_FIELDS.keyword, query.include)]
-      : []),
-    ...(query.exclude
-      ? [containsFilter(RANKED_KEYWORDS_FIELDS.keyword, query.exclude, true)]
-      : []),
-  ];
-
-  const result = await dfs.labs.googleRankedKeywordsLive({
-    target: query.domain,
-    locationCode: query.location,
-    languageCode: query.language,
-    limit: query.limit,
-    offset: query.offset,
-    itemTypes: [paid ? "paid" : "organic"],
-    filters,
-    sorts: [{ field: RANKED_KEYWORDS_FIELDS.position, direction: "asc" }],
-    fresh: query.fresh,
-  });
-
-  const body: DomainKeywordsResponse = {
-    domain: query.domain,
-    locationCode: query.location,
-    languageCode: query.language,
-    paid,
-    items: result.items.map((item) => ({
-      keyword: item.keyword,
-      searchVolume: item.metrics.searchVolume,
-      cpc: item.metrics.cpc,
-      competition: item.metrics.competition,
-      competitionLevel: item.metrics.competitionLevel,
-      keywordDifficulty: item.keywordDifficulty,
-      position: item.position,
-      positionAbsolute: item.positionAbsolute,
-      url: item.url,
-      title: item.title,
-      serpItemType: item.serpItemType,
-      traffic: item.etv,
-    })),
-    totalCount: result.totalCount,
-    itemsCount: result.itemsCount,
-    limit: query.limit,
-    offset: query.offset,
-    costUsd: result.costUsd,
-    cached: result.cached,
-  };
-  return c.json(body);
+  const query = readQuery(c, domainKeywordsQuerySchema);
+  const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
+  return c.json(await domainKeywords(c.env, db, query));
 });
 
 domains.get("/pages", async (c) => {
