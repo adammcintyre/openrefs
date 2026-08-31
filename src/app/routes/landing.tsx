@@ -109,8 +109,7 @@ export function Landing() {
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
               Five research tools you can point at any domain, and four that
-              track a site you own. Four are live today — the rest ship in
-              the phase marked below.
+              track a site you own. All nine are live.
             </p>
           </div>
 

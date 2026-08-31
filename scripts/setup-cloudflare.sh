@@ -175,7 +175,7 @@ bold "Applying migrations to the remote database"
 bold "Done"
 cat <<'EOF'
   Next:
-    1. Set the three secrets above (deploys will fail without them).
+    1. Set APP_MASTER_KEY above (the app cannot store credentials without it).
     2. npm run types    # regenerate Env types
     3. npm run deploy
 EOF
