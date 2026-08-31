@@ -49,6 +49,8 @@ DataForSEO AI Optimization API: prompt sets per project, scheduled runs across e
 
 ## Phase 7 — Content Discovery
 
+**Status: shipped 2026-08-31 (v0.7.0). All nine product modules live; 8a/8b public API + MCP also shipped.**
+
 Topic search via SERPs enriched with traffic estimates, Domain Score, referring domains; filters (score/traffic/ref-domains; optional deep word-count scan); "low competition, real traffic" preset views.
 
 ## Phase 8 — Hosted polish

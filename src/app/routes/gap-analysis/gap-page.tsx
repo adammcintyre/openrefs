@@ -698,6 +698,7 @@ export function GapAnalysisPage() {
         workspaceId={activeWorkspaceId}
         open={addTargets !== null}
         onClose={() => setAddTargets(null)}
+        market={{ location: search.location, language: search.language }}
         keywords={addTargets ?? []}
       />
     </div>

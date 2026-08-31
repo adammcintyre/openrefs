@@ -42,11 +42,14 @@ export function AddToCollectionDialog({
   open,
   onClose,
   keywords,
+  market,
 }: {
   workspaceId: string | null;
   open: boolean;
   onClose: () => void;
   keywords: KeywordToAdd[];
+  /** The market the keywords were researched in — stamped onto saved rows. */
+  market?: { location: number; language: string };
 }) {
   const { toast } = useToast();
   const { data, isPending } = useCollections(workspaceId);
@@ -82,7 +85,11 @@ export function AddToCollectionDialog({
         : selectedId;
       if (collectionId === null) return;
 
-      const result = await addKeywords.mutateAsync({ collectionId, keywords });
+      const result = await addKeywords.mutateAsync({
+        collectionId,
+        keywords,
+        market,
+      });
 
       const name = creating
         ? newName.trim()

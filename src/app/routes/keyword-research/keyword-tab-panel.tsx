@@ -278,6 +278,7 @@ export function KeywordTabPanel({
         workspaceId={workspaceId}
         open={addTargets !== null}
         onClose={() => setAddTargets(null)}
+        market={{ location: market.locationCode, language: market.languageCode }}
         keywords={addTargets ?? []}
       />
 

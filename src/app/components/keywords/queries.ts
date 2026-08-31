@@ -350,15 +350,24 @@ export function useAddKeywords(workspaceId: string | null) {
     mutationFn: ({
       collectionId,
       keywords,
+      market,
     }: {
       collectionId: string;
       keywords: KeywordToAdd[];
+      /**
+       * The market the keywords were researched in. Stamped onto each row so
+       * the collection's View SERP action knows where to look; omitted rows
+       * store an unknown market and the UI has to ask.
+       */
+      market?: { location: number; language: string };
     }) =>
       api.post<CollectionKeywordsAddedResponse>(
         `/collections/${encodeURIComponent(collectionId)}/keywords?${queryString({
           workspace: workspaceId ?? "",
         })}`,
-        { keywords },
+        market === undefined
+          ? { keywords }
+          : { keywords, location: market.location, language: market.language },
       ),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
