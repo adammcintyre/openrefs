@@ -56,7 +56,8 @@ const MODULE_PATHS: Record<string, RegExp> = {
   "/collections": /^\/collections(\/|$)/,
   "/history": /^\/history(\/|$)/,
   "/content": /^\/content\//,
-  "/projects": /^\/projects$|^\/projects\/\{[^}]+\}$|^\/projects\/\{[^}]+\}\/keywords/,
+  "/projects":
+    /^\/projects$|^\/projects\/\{[^}]+\}$|^\/projects\/\{[^}]+\}\/keywords|^\/projects\/\{[^}]+\}\/rank\//,
   "/projects/ai": /^\/projects\/\{[^}]+\}\/ai(\/|$)/,
   "/audits": /^\/audits\/|^\/projects\/\{[^}]+\}\/audits$/,
   "/dashboard": /^\/dashboard$/,

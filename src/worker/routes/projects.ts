@@ -7,6 +7,7 @@
  *   POST   /api/v1/projects/:id/keywords             bulk add + check now
  *   DELETE /api/v1/projects/:id/keywords             bulk remove
  *   POST   /api/v1/projects/:id/keywords/check-now   re-check           (admin)
+ *   GET    /api/v1/projects/:id/rank/summary         daily rollup for the chart
  *   .../:id/audits                                   mounted from audits.ts
  *
  * Projects and tracked keywords are pure D1 — nothing here calls DataForSEO.
@@ -50,11 +51,13 @@ import { authorizeWorkspace, normalizeDomain, workspaceParam } from "../lib/rese
 import { readJson, readParams, readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
 import {
+  clampSummaryDays,
   countKeywords,
   keywordCounts,
   lastCheckedAtByProject,
   listProjects,
   projectColumns,
+  rankSummary,
   requireProject,
   toProject,
   trackedKeywordsForProject,
@@ -77,6 +80,15 @@ projectsRouter.route("/:id/audits", projectAuditsRouter);
 
 const workspaceQuerySchema = z.object({ workspace: workspaceParam });
 const idParamSchema = z.object({ id: z.string().trim().min(1) });
+
+/**
+ * `?days=90`. Validated as a positive integer here and clamped to the served
+ * range in the handler — the schema's job is to reject "banana", the clamp's
+ * job is to be generous about 10000.
+ */
+const rankSummaryQuerySchema = workspaceQuerySchema.extend({
+  days: z.coerce.number().int().min(1).optional(),
+});
 
 /** One check per hour per project. */
 export const CHECK_NOW_WINDOW_SECONDS = 60 * 60;
@@ -317,6 +329,24 @@ projectsRouter.delete("/:id/keywords", async (c) => {
     keywordCount: after,
   };
   return c.json(body);
+});
+
+/**
+ * GET /api/v1/projects/:id/rank/summary?workspace=…&days=…
+ *
+ * The Rank Tracking overview chart: one grouped query over `rank_snapshots`,
+ * oldest first. Free — pure D1, no provider call, no `ResultMeta` — so the
+ * chart can render on every visit without a cost hint or a spend-cap check.
+ *
+ * `days` is clamped rather than refused (7–180, default 30): a hand-edited URL
+ * asking for a decade should get the longest window we serve, not an error.
+ */
+projectsRouter.get("/:id/rank/summary", async (c) => {
+  const { workspace, days } = readQuery(c, rankSummaryQuerySchema);
+  const { id } = readParams(c, idParamSchema);
+  const db = await authorizeWorkspace(c.env, c.get("session"), workspace);
+
+  return c.json(await rankSummary(db, workspace, id, clampSummaryDays(days)));
 });
 
 /**

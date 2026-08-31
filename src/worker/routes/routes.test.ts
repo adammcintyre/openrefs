@@ -150,6 +150,7 @@ describe("session guard", () => {
     ["POST", "/projects/abc/keywords"],
     ["DELETE", "/projects/abc/keywords"],
     ["POST", "/projects/abc/keywords/check-now"],
+    ["GET", "/projects/abc/rank/summary"],
     // Phase 4. Creating an audit buys a crawl, and every read is tenant data —
     // including the R2-hydrated drill-down, which must never answer a caller
     // who has not proved workspace membership.

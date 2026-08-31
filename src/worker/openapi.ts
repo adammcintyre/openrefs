@@ -105,6 +105,11 @@ import {
 } from "../shared/gsc";
 import { DEVICES, PROJECT_NAME_MAX_LENGTH } from "../shared/projects";
 import { TRACKED_KEYWORDS_BULK_MAX } from "../shared/tracking";
+import {
+  RANK_SUMMARY_DEFAULT_DAYS,
+  RANK_SUMMARY_MAX_DAYS,
+  RANK_SUMMARY_MIN_DAYS,
+} from "./services/projects";
 import { APP_VERSION } from "../shared/version";
 import { WORKSPACE_ROLES } from "../shared/workspaces";
 import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS } from "./lib/rate-limit";
@@ -2026,6 +2031,42 @@ const SCHEMAS: Record<string, JsonSchema> = {
     estimatedCostUsd: num("A hint, not a bill — see the operation description."),
     nextAllowedAt: str("ISO 8601 — when another check becomes allowed for this project."),
   }),
+
+  RankSummaryPoint: obj(
+    {
+      date: str("`YYYY-MM-DD`, UTC — the form `rank_snapshots.date` stores."),
+      avgPosition: nullableNum(
+        "Mean of the positions that ranked that day, to one decimal. **Null when " +
+          "none did** — zero would be the best position possible, invented from an " +
+          "absence.",
+      ),
+      top3: int("Keywords at position ≤ 3 that day."),
+      top10: int("Keywords at position ≤ 10 that day."),
+      top100: int("Keywords at position ≤ 100 that day."),
+      tracked: int(
+        "Keywords with any snapshot that day, ranked or not — the denominator " +
+          "the bands are read against.",
+      ),
+    },
+    {
+      description:
+        "One day of a project's rank snapshots. The bands nest: `top3` ⊆ `top10` " +
+        "⊆ `top100` ⊆ `tracked`, so a chart layers them rather than stacking them.",
+    },
+  ),
+
+  RankSummaryResponse: obj(
+    {
+      days: num("The window actually applied — `days` clamped to what the API allows."),
+      points: arrayOf(ref("RankSummaryPoint"), "Oldest first."),
+    },
+    {
+      description:
+        "Derived entirely from D1 — no provider call and no `ResultMeta`. Days " +
+        "with no check are missing rather than zero-filled: plot by `date`, never " +
+        "by index.",
+    },
+  ),
 
   /* -------------------------- audits (audits.ts) -------------------------- */
 
@@ -4376,6 +4417,48 @@ const PATHS: Record<string, PathItem> = {
         "202": jsonResponse("RankCheckEnqueuedResponse", "Queued."),
         "409": errorResponse("`conflict` — the project has no tracked keywords to check."),
         ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed", "RateLimited"),
+      },
+    },
+  },
+
+  "/projects/{id}/rank/summary": {
+    get: {
+      operationId: "getRankSummary",
+      summary: "Daily rollup of a project's rank snapshots, for the overview chart.",
+      description:
+        "One grouped query over `rank_snapshots`, oldest first. **Free**: pure D1, " +
+        "no provider call, no `ResultMeta`, nothing that can trip the spend cap — " +
+        "so the chart can render on every visit.\n\n" +
+        "**Days with no check are absent, not zero.** A project first checked on a " +
+        "Tuesday has no Monday row, and a project nobody has checked for a month " +
+        "has a month-shaped gap. Plot by `date`, never by index — a chart that " +
+        "zero-fills draws a cliff to no tracked keywords that never happened.\n\n" +
+        "`avgPosition` averages **only the keywords that ranked that day**, and is " +
+        "null when none did; zero would be the best position possible, invented " +
+        "from an absence. `tracked` counts every snapshot taken that day, ranked or " +
+        "not, and is the denominator the bands are read against. The bands nest: " +
+        "`top3` ⊆ `top10` ⊆ `top100` ⊆ `tracked`.\n\n" +
+        "The window is a cutoff counted back from today (UTC), inclusive — " +
+        `\`days=7\` covers today and the six days before it — clamped to ${RANK_SUMMARY_MIN_DAYS}–${RANK_SUMMARY_MAX_DAYS} ` +
+        "rather than refused, and echoed back as `days`.",
+      tags: ["Rank Tracking"],
+      parameters: projectScoped(
+        queryParam(
+          "days",
+          {
+            type: "integer",
+            minimum: RANK_SUMMARY_MIN_DAYS,
+            maximum: RANK_SUMMARY_MAX_DAYS,
+            default: RANK_SUMMARY_DEFAULT_DAYS,
+          },
+          {
+            description: `Length of the window in days, clamped to ${RANK_SUMMARY_MIN_DAYS}–${RANK_SUMMARY_MAX_DAYS}.`,
+          },
+        ),
+      ),
+      responses: {
+        "200": jsonResponse("RankSummaryResponse", "The daily rollup, oldest first."),
+        ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed"),
       },
     },
   },
