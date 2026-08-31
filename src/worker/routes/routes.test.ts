@@ -27,6 +27,7 @@ const MOUNT_PROBES: Record<string, string> = {
   "/backlinks": "/backlinks/summary",
   "/gap": "/gap/keywords",
   "/collections": "/collections",
+  "/history": "/history",
   "/content": "/content/discover",
   "/projects": "/projects",
   "/projects/ai": "/projects/abc/ai/prompts",

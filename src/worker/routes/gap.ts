@@ -38,6 +38,7 @@ import {
 } from "../lib/research";
 import { readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
+import { historyContext, recordSearch } from "../services/history";
 import {
   BY_VOLUME_DESC,
   ORGANIC_ONLY,
@@ -153,11 +154,41 @@ const gapPagesQuerySchema = marketQuerySchema
 
 /**
  * GET /api/v1/gap/keywords
+ *
+ * Records history; `/gap/pages` deliberately does not. Pages compares a list of
+ * URLs rather than a target against competitors — different inputs, a different
+ * question, and nothing a keyword-gap trail row could re-run.
  */
 gap.get("/keywords", async (c) => {
   const query = readQuery(c, gapKeywordsQuerySchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await gapKeywords(c.env, db, query));
+  const body = await gapKeywords(c.env, db, query);
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "gap",
+    {
+      target: query.target,
+      // The service's list, not the caller's: de-duplicated and with the
+      // target itself removed, which is the comparison that actually ran and
+      // the column order the row must reproduce.
+      competitors: body.competitors,
+      location: query.location,
+      language: query.language,
+      // `mode` is excluded on purpose — see GapHistoryParams. It selects a view
+      // over rows this query already covers, so switching modes is not a new
+      // search and must not be a second trail row.
+    },
+    {
+      // Before the mode filter, which is what makes the number comparable
+      // between a row saved in `missing` and the same search seen in `all`.
+      keywordCount: (body.itemsCount ?? body.items.length) + body.filteredOut,
+      competitorCount: body.competitors.length,
+    },
+  );
+
+  return c.json(body);
 });
 
 /**

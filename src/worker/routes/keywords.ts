@@ -27,6 +27,7 @@ import {
   rangeQuerySchema,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
+import { historyContext, recordSearch } from "../services/history";
 import {
   keywordIdeas,
   keywordOverview,
@@ -63,10 +64,39 @@ export const keywordSerpQuerySchema = keywordQuerySchema.extend({
   device: z.enum(["desktop", "mobile"]).optional(),
 });
 
+/**
+ * GET /api/v1/keywords/overview
+ *
+ * The one keyword route that records history: a seed keyword lookup is what a
+ * user thinks of as "a search", while the ideas/suggestions/related tabs are
+ * views over that same seed and would fill the trail with near-duplicates.
+ */
 keywords.get("/overview", async (c) => {
   const query = readQuery(c, keywordOverviewQuerySchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordOverview(c.env, db, query));
+  const body = await keywordOverview(c.env, db, query);
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "keywords",
+    {
+      keyword: body.keyword,
+      location: query.location,
+      language: query.language,
+    },
+    // Nulls throughout for a keyword the provider has never seen. Recorded
+    // anyway: the search happened, and the upsert keeps any better summary a
+    // previous run captured.
+    {
+      volume: body.searchVolume,
+      difficulty: body.keywordDifficulty,
+      cpc: body.cpc,
+      intent: body.intent,
+    },
+  );
+
+  return c.json(body);
 });
 
 keywords.get("/ideas", async (c) => {

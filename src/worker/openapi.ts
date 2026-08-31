@@ -92,6 +92,12 @@ import {
   GAP_MODES,
 } from "../shared/gap";
 import {
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_KEEP,
+  HISTORY_MAX_LIMIT,
+  HISTORY_MODULES,
+} from "../shared/history";
+import {
   GSC_DATA_LAG_DAYS,
   GSC_DEFAULT_RANGE_DAYS,
   GSC_OPPORTUNITY_RULES,
@@ -707,6 +713,12 @@ const TAGS: OpenApiTag[] = [
     name: "Collections",
     description:
       "Saved keyword lists. Pure storage: no DataForSEO call, no cost, no spend cap.",
+  },
+  {
+    name: "History",
+    description:
+      "The workspace's research trail — every Keyword Research, Domain Overview " +
+      "and Gap Analysis search, recorded automatically and re-openable for free.",
   },
   {
     name: "Content Discovery",
@@ -1782,6 +1794,110 @@ const SCHEMAS: Record<string, JsonSchema> = {
   }),
 
   CollectionDeletedResponse: obj({ deleted: literal(true), id: str() }),
+
+  /* -------------------------- history (history.ts) ------------------------ */
+
+  HistoryModule: enumOf(
+    HISTORY_MODULES,
+    "Which research module a trail row belongs to.",
+  ),
+
+  KeywordHistoryParams: obj({
+    keyword: str(),
+    location: int("DataForSEO location code."),
+    language: str(),
+  }),
+
+  DomainHistoryParams: obj({
+    target: str("Normalised hostname, as the module's URL state stores it."),
+    location: int(),
+    language: str(),
+  }),
+
+  GapHistoryParams: obj(
+    {
+      target: str(),
+      competitors: arrayOf(
+        str(),
+        "Normalised competitor hostnames, in column order.",
+      ),
+      location: int(),
+      language: str(),
+    },
+    {
+      description:
+        "The comparison's inputs. `mode` is **absent on purpose**: it selects a " +
+        "view over rows the query already covers, so switching modes is not a " +
+        "new search and does not create a second row.",
+    },
+  ),
+
+  KeywordHistorySummary: obj({
+    volume: nullableInt("Monthly search volume."),
+    difficulty: nullableNum("0–100."),
+    cpc: nullableNum(),
+    intent: nullableStr(),
+  }),
+
+  DomainHistorySummary: obj({
+    domainScore: nullableNum(
+      "0–100. Always null from this endpoint: Domain Score is a link-graph " +
+        "metric and the overview is a traffic query, so filling it in would " +
+        "mean buying a second call per trail row.",
+    ),
+    organicTraffic: nullableNum(),
+    organicKeywords: nullableInt(),
+  }),
+
+  GapHistorySummary: obj({
+    keywordCount: nullableInt("Rows the comparison found, before mode filtering."),
+    competitorCount: int(),
+  }),
+
+  HistoryEntry: obj(
+    {
+      id: str(),
+      module: ref("HistoryModule"),
+      params: {
+        description:
+          "Exactly what re-runs this search. The shape follows `module`: " +
+          "`KeywordHistoryParams`, `DomainHistoryParams` or `GapHistoryParams`.",
+        anyOf: [
+          ref("KeywordHistoryParams"),
+          ref("DomainHistoryParams"),
+          ref("GapHistoryParams"),
+        ],
+      },
+      summary: {
+        description:
+          "The headline metrics captured when the search last returned some — " +
+          "what makes the list scannable without re-running anything. Null " +
+          "until a search returns metrics; a later run that returns none does " +
+          "not erase one already captured. Shape follows `module`.",
+        anyOf: [
+          ref("KeywordHistorySummary"),
+          ref("DomainHistorySummary"),
+          ref("GapHistorySummary"),
+          { type: "null" },
+        ],
+      },
+      hitCount: int("Times this exact search has been run or reopened here."),
+      firstSearchedAt: str("ISO 8601."),
+      lastSearchedAt: str("ISO 8601."),
+    },
+    {
+      description:
+        "One remembered search. Re-running one updates this row rather than " +
+        "adding another, so the trail is what the workspace does, not a log.",
+    },
+  ),
+
+  HistoryListResponse: obj({
+    items: arrayOf(ref("HistoryEntry"), "Newest first."),
+    total: int("Rows stored for this module, which can exceed `items.length`."),
+  }),
+
+  HistoryDeletedResponse: obj({ deleted: int("Rows removed.") }),
 
   /* ------------------------ projects (projects.ts) ------------------------ */
 
@@ -3948,6 +4064,84 @@ const PATHS: Record<string, PathItem> = {
       parameters: [pathParam("id", "Collection id."), parameterRef("WorkspaceQuery")],
       responses: {
         "200": csvResponse("The collection's keywords as CSV."),
+        ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed"),
+      },
+    },
+  },
+
+  /* -------------------------------- history -------------------------------- */
+
+  "/history": {
+    get: {
+      operationId: "listSearchHistory",
+      summary: "The workspace's trail for one research module, newest first.",
+      description:
+        "Rows are written automatically by `GET /keywords/overview`, " +
+        "`GET /domains/overview` and `GET /gap/keywords` — there is no way to " +
+        "add one by hand, because the trail is a record of what was actually " +
+        "searched. Re-running a search updates its row (`hitCount`, " +
+        `\`lastSearchedAt\`) rather than adding another, and only the newest ${HISTORY_KEEP} ` +
+        "rows per module are kept.\n\n" +
+        "Re-opening a row is free: re-issue its `params` with `stale=true`, " +
+        "which serves the cached answer even past its normal lifetime and " +
+        "spends nothing. `fresh=true` is the opposite affordance, and the one " +
+        "that bills.\n\n" +
+        "Pure storage: no DataForSEO call, no cost, no `ResultMeta`.",
+      tags: ["History"],
+      parameters: [
+        parameterRef("WorkspaceQuery"),
+        queryParam("module", ref("HistoryModule"), {
+          required: true,
+          description: "Which module's trail to read. A trail is always one module's.",
+        }),
+        queryParam(
+          "limit",
+          {
+            type: "integer",
+            minimum: 1,
+            maximum: HISTORY_MAX_LIMIT,
+            default: HISTORY_DEFAULT_LIMIT,
+          },
+          {
+            description: `Rows to return, 1–${HISTORY_MAX_LIMIT}. Clamped rather than refused above the ceiling: a panel asking for more than we keep gets the most there is.`,
+          },
+        ),
+      ],
+      responses: {
+        "200": jsonResponse("HistoryListResponse", "The trail."),
+        ...errors("Unauthorized", "Forbidden", "ValidationFailed"),
+      },
+    },
+    delete: {
+      operationId: "clearSearchHistory",
+      summary: "Clear one module's trail.",
+      description:
+        "Clearing an empty trail succeeds with `deleted: 0` — the caller asked " +
+        "for it to be empty, and it is.",
+      tags: ["History"],
+      parameters: [
+        parameterRef("WorkspaceQuery"),
+        queryParam("module", ref("HistoryModule"), { required: true }),
+      ],
+      responses: {
+        "200": jsonResponse("HistoryDeletedResponse", "How many rows were removed."),
+        ...errors("Unauthorized", "Forbidden", "ValidationFailed"),
+      },
+    },
+  },
+
+  "/history/{id}": {
+    delete: {
+      operationId: "deleteSearchHistoryEntry",
+      summary: "Forget one search.",
+      description:
+        "No `module` parameter: the caller has a row id from a list it was " +
+        "already given. A row belonging to another workspace answers 404, which " +
+        "is the same answer a nonexistent id gets.",
+      tags: ["History"],
+      parameters: [pathParam("id", "History row id."), parameterRef("WorkspaceQuery")],
+      responses: {
+        "200": jsonResponse("HistoryDeletedResponse", "`{ deleted: 1 }`."),
         ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed"),
       },
     },

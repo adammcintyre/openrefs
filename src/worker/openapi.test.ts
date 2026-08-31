@@ -54,6 +54,7 @@ const MODULE_PATHS: Record<string, RegExp> = {
   "/backlinks": /^\/backlinks\//,
   "/gap": /^\/gap\//,
   "/collections": /^\/collections(\/|$)/,
+  "/history": /^\/history(\/|$)/,
   "/content": /^\/content\//,
   "/projects": /^\/projects$|^\/projects\/\{[^}]+\}$|^\/projects\/\{[^}]+\}\/keywords/,
   "/projects/ai": /^\/projects\/\{[^}]+\}\/ai(\/|$)/,

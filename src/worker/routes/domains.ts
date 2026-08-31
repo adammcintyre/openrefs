@@ -33,6 +33,7 @@ import {
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
 import { domainKeywords, domainOverview, toRankMetrics } from "../services/domains";
+import { historyContext, recordSearch } from "../services/history";
 import type { AppEnv } from "../types";
 
 const domains = new Hono<AppEnv>();
@@ -107,10 +108,46 @@ export const domainKeywordsQuerySchema = listQuerySchema
     exclude: z.string().trim().min(1).optional(),
   });
 
+/**
+ * GET /api/v1/domains/overview
+ *
+ * The module's headline metrics, and the one domain route that records
+ * history: the tabs below it are views of the same target in the same market,
+ * so recording each of them would fill the trail with one search five times.
+ */
 domains.get("/overview", async (c) => {
   const query = readQuery(c, domainOverviewQuerySchema);
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await domainOverview(c.env, db, query));
+  const body = await domainOverview(c.env, db, query);
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "domains",
+    // `query.domain` is already through `normalizeDomain`, which is the form
+    // the module's URL state stores — so a trail row round-trips into the
+    // search box unchanged.
+    {
+      target: query.domain,
+      location: query.location,
+      language: query.language,
+    },
+    {
+      /*
+       * Structurally null: Domain Score is a link-graph metric from the
+       * Backlinks API, and this endpoint is a Labs traffic query that does not
+       * carry one. Buying a second call to fill in a number for a list row
+       * would make a free trail expensive, which is the opposite of the point.
+       * The field stays in the shape because the summary is a contract, and
+       * null there honestly means "not measured here".
+       */
+      domainScore: null,
+      organicTraffic: body.organic.traffic,
+      organicKeywords: body.organic.keywordCount,
+    },
+  );
+
+  return c.json(body);
 });
 
 domains.get("/history", async (c) => {
