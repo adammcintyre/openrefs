@@ -10,11 +10,11 @@
  * on screen next to the rows it paid for, and the expensive tab says so before
  * you open it rather than after.
  */
-import { Download, GitCompareArrows, SearchX, SlidersHorizontal, Users, X } from "lucide-react";
+import { Download, GitCompareArrows, Layers, Search, SearchX, SlidersHorizontal, Users, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import type { GapKeywordRow } from "../../../shared/gap";
+import type { GapKeywordRow, GapPageRow } from "../../../shared/gap";
 import { GAP_MODES, GAP_MODE_DESCRIPTIONS } from "../../../shared/gap";
 import type { GapMode } from "../../../shared/gap";
 import { aggregateMeta, formatCount } from "../../components/domains/format";
@@ -56,6 +56,8 @@ import {
   parseGapFilterDraft,
 } from "./gap-filters";
 import { GapTable } from "./gap-table";
+import type { GapPagesSubmit } from "./pages-form";
+import { GapPagesView } from "./pages-view";
 import {
   GAP_CSV_MAX_ROWS,
   PAGE_SIZE,
@@ -64,8 +66,10 @@ import {
 } from "./queries";
 import { GapSearchForm } from "./search-form";
 import type { GapSubmit } from "./search-form";
+import type { GapView } from "./url-state";
 import {
   DEFAULT_MARKET,
+  GAP_VIEWS,
   gapSearchKey,
   gapSearchParams,
   isGapSearchable,
@@ -78,6 +82,62 @@ const MODE_LABELS: Record<GapMode, string> = {
   untapped: "Untapped",
   all: "All",
 };
+
+const VIEW_LABELS: Record<GapView, string> = {
+  keywords: "Keywords",
+  pages: "Pages",
+};
+
+const VIEW_ICONS: Record<GapView, typeof Search> = {
+  keywords: Search,
+  pages: Layers,
+};
+
+/**
+ * The view switch.
+ *
+ * A segmented control rather than two more tabs, because the four mode tabs
+ * below already *are* tabs and nesting one tablist inside another is a
+ * genuinely confusing thing to hand a screen reader. This is a radio group:
+ * two mutually exclusive views of the module, announced as such.
+ */
+function ViewSwitch({
+  value,
+  onChange,
+}: {
+  value: GapView;
+  onChange: (view: GapView) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Compare"
+      className="inline-flex rounded-app border border-border bg-surface-muted p-1"
+    >
+      {GAP_VIEWS.map((view) => {
+        const Icon = VIEW_ICONS[view];
+        const active = view === value;
+        return (
+          <button
+            key={view}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(view)}
+            className={
+              active
+                ? "inline-flex items-center gap-1.5 rounded-app bg-surface px-3 py-1.5 text-sm font-medium text-foreground shadow-sm"
+                : "inline-flex items-center gap-1.5 rounded-app px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            }
+          >
+            <Icon className="size-3.5" aria-hidden="true" />
+            {VIEW_LABELS[view]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Volume travels with the keyword so a collection snapshot means something. */
 function toKeywordsToAdd(rows: ReadonlyArray<GapKeywordRow>): KeywordToAdd[] {
@@ -158,9 +218,18 @@ export function GapAnalysisPage() {
         location: next.location,
         language: next.language,
       });
-      setParams(gapSearchParams({ ...next, mode: search.mode }));
+      // A keyword comparison keeps whatever the pages view had in it, so
+      // flicking back and forth does not throw away either side's work.
+      setParams(
+        gapSearchParams({
+          ...next,
+          mode: search.mode,
+          view: "keywords",
+          pages: search.pages,
+        }),
+      );
     },
-    [activeWorkspaceId, setParams, search.mode],
+    [activeWorkspaceId, setParams, search.mode, search.pages],
   );
 
   const selectMode = useCallback(
@@ -172,6 +241,39 @@ export function GapAnalysisPage() {
       });
     },
     [search, setParams],
+  );
+
+  /**
+   * Switching views keeps everything else in the URL.
+   *
+   * Deliberate: someone who has compared four rivals and flicks to Pages should
+   * find their comparison still there when they flick back, and the market they
+   * chose should carry across — it is the one input both views share.
+   */
+  const selectView = useCallback(
+    (view: GapView) => {
+      setParams(gapSearchParams({ ...search, view }), { replace: true });
+    },
+    [search, setParams],
+  );
+
+  const applyPagesSearch = useCallback(
+    (next: GapPagesSubmit) => {
+      writeLastMarket(activeWorkspaceId, {
+        location: next.location,
+        language: next.language,
+      });
+      setParams(
+        gapSearchParams({
+          ...search,
+          pages: next.pages,
+          location: next.location,
+          language: next.language,
+          view: "pages",
+        }),
+      );
+    },
+    [activeWorkspaceId, search, setParams],
   );
 
   const onToggle = useCallback((keyword: string) => {
@@ -424,6 +526,32 @@ export function GapAnalysisPage() {
                   ? "No keyword is covered by every one of these competitors while you are absent. Untapped is the broader view — it only needs one of them to rank."
                   : "DataForSEO found no keywords matching this view for these domains in this market."
               }
+              /*
+               * An empty `missing` is the most common dead end on this screen:
+               * it requires *every* rival to rank, which against an
+               * imperfectly-matched peer set is rare. The fix is one tab away
+               * and the description already names it, so the button just does
+               * it — same comparison, same market, same competitors, broader
+               * rule.
+               *
+               * And it really is free, which is why the title says so:
+               * `upstreamQueriesForMode` (src/worker/routes/gap.ts) returns the
+               * identical `{ intersections: false, requireOutranking: false }`
+               * query for both modes. They differ only in the row filter
+               * applied afterwards, so the switch is a cache hit rather than a
+               * second purchase.
+               */
+              action={
+                search.mode === "missing" ? (
+                  <Button
+                    size="sm"
+                    onClick={() => selectMode("untapped")}
+                    title="Same comparison, broader rule — Untapped needs only one competitor to rank. It reuses this query's cached results, so it costs nothing."
+                  >
+                    Show Untapped instead
+                  </Button>
+                ) : undefined
+              }
             />
           )
         }
@@ -505,6 +633,17 @@ export function GapAnalysisPage() {
         </Card>
       ) : (
         <>
+          <ViewSwitch value={search.view} onChange={selectView} />
+
+          {search.view === "pages" ? (
+            <GapPagesView
+              workspaceId={activeWorkspaceId}
+              search={search}
+              onSubmit={applyPagesSearch}
+              onViewSerp={(row: GapPageRow) => setSerpKeyword(row.keyword)}
+            />
+          ) : (
+        <>
           <GapSearchForm
             workspaceId={activeWorkspaceId}
             value={search}
@@ -540,6 +679,8 @@ export function GapAnalysisPage() {
             <ApiErrorNotice error={query.error} />
           ) : (
             <Tabs tabs={tabs} value={search.mode} onValueChange={selectMode} />
+          )}
+        </>
           )}
         </>
       )}

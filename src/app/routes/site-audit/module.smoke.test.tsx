@@ -23,6 +23,7 @@ import type {
   AuditCategoryResult,
   AuditDetailResponse,
   AuditIssuesResponse,
+  AuditListItem,
   AuditListResponse,
   AuditSummary,
 } from "../../../shared/audits";
@@ -262,6 +263,57 @@ const RUNNING_LIST: AuditListResponse = {
     ...LIST.audits,
   ],
 };
+
+/**
+ * The queue-backed window (Phase 7).
+ *
+ * Creating an audit inserts a `pending` row and enqueues an `audit_post` job
+ * rather than posting the task inline, so for the first minute or two the audit
+ * exists, has no crawl task, and nothing is happening on DataForSEO's side yet.
+ * `progress` is null because there is no upstream queue to poll.
+ */
+const QUEUED_DETAIL: AuditDetailResponse = {
+  ...RUNNING_DETAIL,
+  status: "pending",
+  progress: null,
+};
+
+const QUEUED_LIST: AuditListResponse = {
+  ...RUNNING_LIST,
+  audits: [
+    { ...(RUNNING_LIST.audits[0] as AuditListItem), status: "pending" },
+    ...LIST.audits,
+  ],
+};
+
+/** A refusal that arrives as a code on the row, not as an HTTP status. */
+function failedList(errorCode: string | null, error: string): AuditListResponse {
+  return {
+    ...LIST,
+    auditInProgress: false,
+    audits: [
+      {
+        ...(LIST.audits[0] as AuditListItem),
+        id: RUNNING_AUDIT_ID,
+        status: "failed",
+        score: null,
+        pagesCrawled: 0,
+        error,
+        errorCode,
+      },
+      ...LIST.audits,
+    ],
+  };
+}
+
+function failedDetail(error: string): AuditDetailResponse {
+  return {
+    ...RUNNING_DETAIL,
+    status: "failed",
+    progress: null,
+    error,
+  };
+}
 
 const ISSUES: AuditIssuesResponse = {
   auditId: AUDIT_ID,
@@ -521,5 +573,124 @@ describe("a drill-down for a category that does not exist", () => {
       `/app/site-audit/${AUDIT_ID}/not-a-category?project=${PROJECT_ID}`,
     );
     expect(html).toContain("No such issue category");
+  });
+});
+
+/**
+ * Phase 7: the queue-backed window.
+ *
+ * `POST /projects/:id/audits` now inserts a `pending` row and enqueues an
+ * `audit_post` job instead of buying the crawl inline, so a tarpit on
+ * DataForSEO's side costs a retry rather than the user's click. For that first
+ * minute or two the audit has no crawl task and nothing is happening upstream.
+ */
+describe("an audit queued but not yet posted", () => {
+  const html = render(`/app/site-audit?project=${PROJECT_ID}`, [
+    [["audits", "list", WORKSPACE_ID, PROJECT_ID], QUEUED_LIST],
+    [["audits", "detail", WORKSPACE_ID, RUNNING_AUDIT_ID], QUEUED_DETAIL],
+  ]);
+
+  it("says it is queued rather than claiming a crawl is under way", () => {
+    expect(html).toContain("Queued: brandpacks.com");
+    expect(html).toContain("the crawler starts shortly");
+  });
+
+  /*
+   * The old copy said "queued with DataForSEO", which in this window is simply
+   * untrue — we have not told them about it yet. The distinction matters
+   * because the two states fail differently: a queued audit can still be
+   * refused for a spend cap or missing credentials; a crawling one cannot.
+   */
+  it("does not claim DataForSEO has it yet", () => {
+    expect(html).not.toContain("has been queued with DataForSEO");
+    expect(html).not.toContain("Crawling brandpacks.com");
+  });
+
+  it("says the job retries by itself", () => {
+    expect(html).toContain("retrying by itself if they are busy");
+  });
+
+  it("shows no progress bar, having no numbers to build one from", () => {
+    expect(html).not.toContain("<progress");
+    expect(html).not.toContain("of 25 pages crawled");
+  });
+
+  it("still promises the crawl survives leaving the page", () => {
+    expect(html).toContain("You can leave this page");
+  });
+
+  /*
+   * A pending audit that somehow reports progress is already crawling whatever
+   * its status column says — the numbers are the stronger evidence, so the bar
+   * wins over the label.
+   */
+  it("prefers real progress over the pending label", () => {
+    const crawling = render(`/app/site-audit?project=${PROJECT_ID}`, [
+      [["audits", "list", WORKSPACE_ID, PROJECT_ID], QUEUED_LIST],
+      [
+        ["audits", "detail", WORKSPACE_ID, RUNNING_AUDIT_ID],
+        { ...QUEUED_DETAIL, progress: RUNNING_DETAIL.progress },
+      ],
+    ]);
+    expect(crawling).toContain("12 of 25 pages crawled");
+    expect(crawling).not.toContain("Queued: brandpacks.com");
+  });
+});
+
+/**
+ * Phase 7: a queue-side refusal.
+ *
+ * The crawl is bought after the create call was already answered with a 202, so
+ * a refusal cannot arrive as an HTTP status the SPA branches on. It arrives as
+ * `errorCode` on the audit row — and the UI switches on that code, never on the
+ * message prose, which would break the moment the message is reworded.
+ */
+describe("a failed audit", () => {
+  function renderFailure(code: string | null, message: string): string {
+    return render(`/app/site-audit?project=${PROJECT_ID}`, [
+      [["audits", "list", WORKSPACE_ID, PROJECT_ID], failedList(code, message)],
+      [
+        ["audits", "detail", WORKSPACE_ID, RUNNING_AUDIT_ID],
+        failedDetail(message),
+      ],
+    ]);
+  }
+
+  it("sends a spend-cap refusal to the settings that fix it", () => {
+    const html = renderFailure("spend_cap_exceeded", "Monthly spend cap hit.");
+    expect(html).toContain("Monthly spend cap reached");
+    expect(html).toContain("Review spend cap");
+    expect(html).toContain('href="/app/settings"');
+    // Nothing was bought, so nothing was charged — worth saying plainly.
+    expect(html).toContain("nothing was spent");
+  });
+
+  it("sends a credentials refusal to the data-provider screen", () => {
+    const html = renderFailure("no_credentials", "No DataForSEO credentials.");
+    expect(html).toContain("No DataForSEO credentials");
+    expect(html).toContain("Add API credentials");
+    expect(html).toContain('href="/app/settings/data-provider"');
+  });
+
+  /*
+   * The codes are what select a CTA — not the words. A spend-cap *message* with
+   * no code attached must not be given the spend-cap button, because the code
+   * is the only thing that actually establishes what happened.
+   */
+  it("switches on the code, not on the message", () => {
+    const html = renderFailure(null, "Monthly spend cap exceeded for August.");
+    expect(html).toContain("This audit failed");
+    expect(html).not.toContain("Review spend cap");
+    expect(html).toContain("Monthly spend cap exceeded for August.");
+  });
+
+  it("keeps the plain explanation for a fault with no button to press", () => {
+    const html = renderFailure(
+      "upstream_timeout",
+      "DataForSEO did not respond in time.",
+    );
+    expect(html).toContain("This audit failed");
+    expect(html).toContain("DataForSEO did not respond in time.");
+    expect(html).toContain("Running a new audit is safe");
   });
 });

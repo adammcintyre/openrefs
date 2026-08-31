@@ -6,12 +6,18 @@
  * header says so — refreshing it silently would destroy the only thing that
  * makes a list comparable against its own history, and would cost money to do.
  */
-import { ArrowLeft, Download, FolderOpen, Pencil, Trash2, X } from "lucide-react";
+import { ArrowLeft, Download, FolderOpen, Pencil, Search, Trash2, X } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import type { CollectionKeywordRow } from "../../../shared/collections";
 import { COLLECTION_NAME_MAX_LENGTH } from "../../../shared/collections";
+import type { MetaLocationOption } from "../../../shared/keywords";
+import { marketLabel } from "../../components/domains/market-options";
+import type { MarketSelection } from "../../components/keywords/market";
+import { useMetaLocations } from "../../components/keywords/queries";
+import { SerpPanel } from "../../components/serp-panel";
+import { MarketPickerDialog } from "./market-picker-dialog";
 import {
   ApiErrorNotice,
   useApiErrorToast,
@@ -26,6 +32,7 @@ import {
   useRenameCollection,
 } from "../../components/keywords/queries";
 import {
+  Badge,
   Button,
   ConfirmDialog,
   DataTable,
@@ -47,6 +54,9 @@ interface RowContextValue {
   selected: ReadonlySet<string>;
   onToggle: (keyword: string) => void;
   onToggleAll: (checked: boolean) => void;
+  onViewSerp: (row: CollectionKeywordRow) => void;
+  /** For naming a row's saved market; empty until /meta/locations lands. */
+  locations: ReadonlyArray<MetaLocationOption>;
 }
 
 const RowContext = createContext<RowContextValue | null>(null);
@@ -99,6 +109,58 @@ function SelectCell({ keyword }: { keyword: string }) {
   );
 }
 
+/**
+ * The market this keyword was saved in — or the fact that we do not know.
+ *
+ * `null` is "unknown", never "the workspace default"
+ * (`src/shared/collections.ts` says so in as many words). Rows added before
+ * collections recorded a market carry it, and showing them as UK would be
+ * inventing a fact. The badge is what tells a user why some rows open a SERP
+ * straight away and others ask a question first.
+ */
+function MarketCell({ row }: { row: CollectionKeywordRow }) {
+  const { locations } = useRowContext();
+
+  if (row.locationCode === null || row.languageCode === null) {
+    return (
+      <span
+        className="text-muted-foreground"
+        title="This keyword was saved before collections recorded a market, so we don't know which one it was researched in. Viewing its SERP will ask."
+      >
+        Unknown
+      </span>
+    );
+  }
+
+  return (
+    <Badge variant="neutral">
+      {marketLabel(locations, row.locationCode, row.languageCode)}
+    </Badge>
+  );
+}
+
+function SerpActionCell({ row }: { row: CollectionKeywordRow }) {
+  const { onViewSerp } = useRowContext();
+  const known = row.locationCode !== null && row.languageCode !== null;
+
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => onViewSerp(row)}
+      aria-label={`View SERP for ${row.keyword}`}
+      title={
+        known
+          ? "Open the search results for this keyword, in the market it was saved in."
+          : "Open the search results for this keyword — we'll ask which market first."
+      }
+    >
+      <Search className="size-3.5" aria-hidden="true" />
+      SERP
+    </Button>
+  );
+}
+
 const col = createDataTableColumns<CollectionKeywordRow>();
 
 const columns: Array<DataTableColumn<CollectionKeywordRow>> = [
@@ -125,6 +187,11 @@ const columns: Array<DataTableColumn<CollectionKeywordRow>> = [
       </span>
     ),
   }),
+  col.accessor((row) => row.locationCode ?? undefined, {
+    id: "market",
+    header: "Market",
+    cell: (info) => <MarketCell row={info.row.original} />,
+  }),
   col.accessor("addedAt", {
     header: "Added",
     cell: (info) => (
@@ -132,6 +199,11 @@ const columns: Array<DataTableColumn<CollectionKeywordRow>> = [
         {formatDate(info.getValue<string>())}
       </span>
     ),
+  }),
+  col.display({
+    id: "actions",
+    header: "",
+    cell: (info) => <SerpActionCell row={info.row.original} />,
   }),
 ];
 
@@ -156,7 +228,40 @@ export function CollectionDetail({ workspaceId }: { workspaceId: string | null }
   const [name, setName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  /**
+   * The SERP flow, in two pieces.
+   *
+   * `serpTarget` is the keyword whose SERP is open and the market to open it
+   * in — set directly when the row already knows its market. `pendingKeyword`
+   * is the other path: a row with a null market, waiting on the picker. They
+   * are separate because the panel needs a concrete market before it mounts
+   * (`SerpPanelProps` takes non-nullable codes), so "asking" and "showing" are
+   * genuinely two states rather than one with a hole in it.
+   */
+  const [serpTarget, setSerpTarget] = useState<
+    { keyword: string; market: MarketSelection } | null
+  >(null);
+  const [pendingKeyword, setPendingKeyword] = useState<string | null>(null);
+
+  const locationsQuery = useMetaLocations(workspaceId);
+
   const rows = useMemo(() => query.data?.keywords ?? [], [query.data]);
+
+  const onViewSerp = useCallback((row: CollectionKeywordRow) => {
+    if (row.locationCode !== null && row.languageCode !== null) {
+      setSerpTarget({
+        keyword: row.keyword,
+        market: {
+          locationCode: row.locationCode,
+          languageCode: row.languageCode,
+        },
+      });
+      return;
+    }
+    // Unknown market: ask rather than assume. Showing UK results for a keyword
+    // saved while researching the US would be a wrong answer that looks right.
+    setPendingKeyword(row.keyword);
+  }, []);
 
   const onToggle = useCallback((keyword: string) => {
     setSelected((current) => {
@@ -310,7 +415,16 @@ export function CollectionDetail({ workspaceId }: { workspaceId: string | null }
         </div>
       ) : null}
 
-      <RowContext.Provider value={{ rows, selected, onToggle, onToggleAll }}>
+      <RowContext.Provider
+        value={{
+          rows,
+          selected,
+          onToggle,
+          onToggleAll,
+          onViewSerp,
+          locations: locationsQuery.data?.locations ?? [],
+        }}
+      >
         <DataTable
           columns={columns}
           data={rows}
@@ -385,6 +499,34 @@ export function CollectionDetail({ workspaceId }: { workspaceId: string | null }
         description={`${formatVolume(selected.size)} keyword${selected.size === 1 ? "" : "s"} will be removed from this collection.`}
         confirmLabel="Remove"
       />
+
+      <MarketPickerDialog
+        open={pendingKeyword !== null}
+        keyword={pendingKeyword ?? ""}
+        workspaceId={workspaceId}
+        onClose={() => setPendingKeyword(null)}
+        onConfirm={(market) => {
+          if (pendingKeyword === null) return;
+          setSerpTarget({ keyword: pendingKeyword, market });
+          setPendingKeyword(null);
+        }}
+      />
+
+      {/*
+        Mounted only with a concrete market: SerpPanel's props are frozen and
+        non-nullable, and a panel opened with a placeholder market would spend
+        on the wrong country's results.
+      */}
+      {serpTarget === null || workspaceId === null ? null : (
+        <SerpPanel
+          workspaceId={workspaceId}
+          keyword={serpTarget.keyword}
+          locationCode={serpTarget.market.locationCode}
+          languageCode={serpTarget.market.languageCode}
+          open
+          onClose={() => setSerpTarget(null)}
+        />
+      )}
     </div>
   );
 }

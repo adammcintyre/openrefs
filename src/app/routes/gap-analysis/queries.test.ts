@@ -9,6 +9,8 @@ const SEARCH: GapSearch = {
   location: 2826,
   language: "en",
   mode: "missing",
+  view: "keywords",
+  pages: [],
 };
 
 const page = (over: Partial<Parameters<typeof nextGapOffset>[0]> = {}) => ({

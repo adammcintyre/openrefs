@@ -16,7 +16,7 @@
  * conditions the moment it opens is a trap; they live in component state.
  */
 import type { GapMode } from "../../../shared/gap";
-import { GAP_MODES } from "../../../shared/gap";
+import { GAP_MAX_PAGES, GAP_MODES } from "../../../shared/gap";
 import {
   parseCompetitorList,
   hasCompetitors,
@@ -32,6 +32,20 @@ export interface GapMarket {
   language: string;
 }
 
+/**
+ * The two things this module can compare.
+ *
+ * `keywords` is the original: your domain against rival *domains*, filtered by
+ * the four modes. `pages` compares up to `GAP_MAX_PAGES` **URLs** and asks
+ * which keywords they rank for together — there is no "you" in it, so it
+ * carries no mode. They are separate queries against separate endpoints with
+ * separate inputs, which is why the switch is a view and not a fifth tab
+ * alongside the modes.
+ */
+export type GapView = "keywords" | "pages";
+
+export const GAP_VIEWS: readonly GapView[] = ["keywords", "pages"];
+
 /** Everything the URL carries. */
 export interface GapSearch extends GapMarket {
   /** Your domain, normalised. "" when nothing has been searched yet. */
@@ -39,6 +53,15 @@ export interface GapSearch extends GapMarket {
   /** Normalised competitor hostnames, in the order they will be columns. */
   competitors: string[];
   mode: GapMode;
+  view: GapView;
+  /**
+   * Page URLs for the `pages` view, in the order they will be columns.
+   *
+   * Kept verbatim rather than normalised the way domains are: `page_intersection`
+   * compares exact URLs, and stripping a trailing slash or a query string would
+   * silently compare a different page from the one that was pasted.
+   */
+  pages: string[];
 }
 
 /**
@@ -72,6 +95,45 @@ function readMode(raw: string | null): GapMode {
   return GAP_MODES.includes(raw as GapMode) ? (raw as GapMode) : DEFAULT_MODE;
 }
 
+function readView(raw: string | null): GapView {
+  return GAP_VIEWS.includes(raw as GapView) ? (raw as GapView) : "keywords";
+}
+
+/**
+ * A comma- or newline-separated list of page URLs, cleaned up.
+ *
+ * Only http(s) survives: these strings become `href`s in the table and go
+ * upstream as targets, and `page_intersection` has nothing to say about a
+ * `javascript:` value anyway. Duplicates are dropped because comparing a page
+ * against itself is a column of identical numbers, and the list is capped at
+ * the API's own ceiling rather than being sent and refused.
+ */
+export function parsePageList(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const entry of raw.split(/[\n,]/)) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue;
+
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      continue;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+
+    const url = parsed.href;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= GAP_MAX_PAGES) break;
+  }
+
+  return out;
+}
+
 /**
  * Parse the query string into a search.
  *
@@ -91,6 +153,8 @@ export function readGapSearch(
     location: readLocation(params.get("location"), fallback.location),
     language: readLanguage(params.get("language"), fallback.language),
     mode: readMode(params.get("mode")),
+    view: readView(params.get("view")),
+    pages: parsePageList(params.get("pages") ?? ""),
   };
 }
 
@@ -104,14 +168,26 @@ export function gapSearchParams(search: GapSearch): URLSearchParams {
   const params = new URLSearchParams();
   const target = normalizeDomainInput(search.target);
   const competitors = parseCompetitorList(search.competitors.join(","), target);
+  const pages = parsePageList(search.pages.join(","));
 
-  if (target === "" && competitors.length === 0) return params;
+  /*
+   * Nothing has been entered in *either* view — an empty URL rather than a bare
+   * market, so a first visit does not look like a search that failed. The pages
+   * list counts here: a pages comparison has no target and no competitors, and
+   * an early return that only looked at those two would silently drop it.
+   */
+  if (target === "" && competitors.length === 0 && pages.length === 0) {
+    return params;
+  }
 
   if (target !== "") params.set("target", target);
   if (competitors.length > 0) params.set("competitors", competitors.join(","));
+  if (pages.length > 0) params.set("pages", pages.join(","));
   params.set("location", String(search.location));
   params.set("language", search.language);
   if (search.mode !== DEFAULT_MODE) params.set("mode", search.mode);
+  // The keyword view is the default, so its URLs stay as short as they were.
+  if (search.view !== "keywords") params.set("view", search.view);
   return params;
 }
 
@@ -125,6 +201,27 @@ export function isGapSearchable(search: GapSearch): boolean {
     isLikelyDomain(search.target) &&
     hasCompetitors(search.competitors)
   );
+}
+
+/**
+ * True when the pages view has something worth spending on.
+ *
+ * One URL is enough for the API and is a legitimate question ("what does this
+ * page rank for?"), so it is not refused — but the screen says what the view is
+ * *for*, because a one-page intersection is not an intersection.
+ */
+export function isGapPagesSearchable(search: GapSearch): boolean {
+  return search.pages.length > 0;
+}
+
+/**
+ * Identity of one pages comparison, for re-syncing the form.
+ *
+ * Separate from `gapSearchKey` because the two views share a market and nothing
+ * else: switching between them must not read as a changed search in either.
+ */
+export function gapPagesKey(search: GapSearch): string {
+  return [search.pages.join(","), search.location, search.language].join("|");
 }
 
 /**

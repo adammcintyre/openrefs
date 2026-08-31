@@ -25,7 +25,10 @@ import { Link, useSearchParams } from "react-router";
 
 import type { AuditCategoryResult, AuditListItem } from "../../../shared/audits";
 import type { Project } from "../../../shared/projects";
-import { AuditProgressCard } from "../../components/audit/audit-progress";
+import {
+  AuditFailureNotice,
+  AuditProgressCard,
+} from "../../components/audit/audit-progress";
 import {
   estimateAuditCostUsd,
   formatCostCeiling,
@@ -241,6 +244,20 @@ function ProjectAudit({
   const detail = detailQuery.data ?? null;
   const summary = detail?.summary ?? null;
 
+  /**
+   * The selected audit's row in the history list.
+   *
+   * Two things live only here and not on the detail response: `pagesLimit`, and
+   * — since audits became queue-backed — `errorCode`, the machine-readable half
+   * of a failure. A crawl is now bought by a job after the create call was
+   * already answered with a 202, so a refusal cannot arrive as an HTTP status;
+   * it arrives as a code on this row, and each code has its own fix.
+   */
+  const selectedRow = useMemo(
+    () => audits.find((audit) => audit.id === detail?.id) ?? null,
+    [audits, detail?.id],
+  );
+
   /*
    * Lighthouse lands a little after the crawl, so `lighthouse: null` on a
    * freshly finished audit is normal. One more look before we call it
@@ -371,15 +388,16 @@ function ProjectAudit({
           ) : detailQuery.isPending || detail === null ? (
             <ContentSkeleton />
           ) : detail.status === "failed" ? (
-            <FailedNotice error={detail.error} />
+            <AuditFailureNotice
+              error={detail.error}
+              errorCode={selectedRow?.errorCode}
+            />
           ) : isInFlight(detail.status) || summary === null ? (
             <AuditProgressCard
               progress={detail.progress}
-              pagesLimit={
-                audits.find((audit) => audit.id === detail.id)?.pagesLimit ??
-                DEFAULT_CRAWL_PAGES
-              }
+              pagesLimit={selectedRow?.pagesLimit ?? DEFAULT_CRAWL_PAGES}
               domain={detail.domain}
+              status={detail.status}
             />
           ) : (
             <>
@@ -517,31 +535,6 @@ function NoAuditsExplainer({
         )}
       </div>
     </Card>
-  );
-}
-
-/**
- * A crawl that came back failed.
- *
- * The upstream message is shown verbatim: DataForSEO's reasons are specific and
- * actionable ("target domain is not reachable", "robots.txt disallows the
- * crawl") and paraphrasing them would lose the only useful part.
- */
-function FailedNotice({ error }: { error: string | null }) {
-  return (
-    <div
-      role="alert"
-      className="flex flex-col gap-2 rounded-app border border-danger-subtle bg-danger-subtle p-4 text-danger-on-subtle"
-    >
-      <p className="text-sm font-semibold">This audit failed</p>
-      <p className="text-sm leading-relaxed">
-        {error ?? "DataForSEO did not say why the crawl could not complete."}
-      </p>
-      <p className="text-sm leading-relaxed">
-        Nothing was ingested for it. Running a new audit is safe — you are only
-        charged for pages that are actually crawled.
-      </p>
-    </div>
   );
 }
 

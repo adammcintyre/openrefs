@@ -13,7 +13,7 @@
  */
 import { useInfiniteQuery } from "@tanstack/react-query";
 
-import type { GapKeywordsResponse } from "../../../shared/gap";
+import type { GapKeywordsResponse, GapPagesResponse } from "../../../shared/gap";
 import { api } from "../../lib/api";
 import type { GapFilters } from "./gap-filters";
 import type { GapSearch } from "./url-state";
@@ -121,6 +121,56 @@ export function useGapKeywords(
     },
     initialPageParam: 0,
     getNextPageParam: nextGapOffset,
+    enabled: enabled && workspaceId !== null,
+    staleTime: RESULT_STALE_TIME,
+    ...NO_RETRY,
+  });
+}
+
+/**
+ * The pages view: which keywords a set of URLs rank for together.
+ *
+ * A different endpoint from `/gap/keywords`, and a cheaper one — `page_intersection`
+ * compares the whole set in one call rather than one call per competitor, so
+ * this view's "Load more" is a single request however many URLs are in it.
+ *
+ * `filteredOut` has no counterpart here: there is no mode, so nothing is
+ * fetched and then dropped, and paging can advance by `items.length` the
+ * ordinary way.
+ */
+export function useGapPages(
+  workspaceId: string | null,
+  search: GapSearch,
+  enabled: boolean,
+) {
+  return useInfiniteQuery({
+    queryKey: [
+      "gap",
+      "pages",
+      workspaceId,
+      search.pages.join(","),
+      search.location,
+      search.language,
+    ],
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        workspace: workspaceId ?? "",
+        pages: search.pages.join(","),
+        location: String(search.location),
+        language: search.language,
+        limit: String(PAGE_SIZE),
+        offset: String(pageParam),
+      });
+      return api.get<GapPagesResponse>(`/gap/pages?${params}`);
+    },
+    initialPageParam: 0,
+    getNextPageParam: (page) => {
+      if (page.items.length === 0) return undefined;
+      if (page.items.length < page.limit) return undefined;
+      const loaded = page.offset + page.items.length;
+      if (page.totalCount !== null && loaded >= page.totalCount) return undefined;
+      return loaded;
+    },
     enabled: enabled && workspaceId !== null,
     staleTime: RESULT_STALE_TIME,
     ...NO_RETRY,
