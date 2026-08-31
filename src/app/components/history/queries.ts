@@ -7,6 +7,7 @@
  * the handle they share) rather than polled.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import type {
   HistoryDeletedResponse,
@@ -50,17 +51,20 @@ export function useSearchHistory<M extends HistoryModule>(
   });
 }
 
-/** Call after a successful search so the new entry surfaces without a reload. */
+/**
+ * Call after a successful search so the new entry surfaces without a reload.
+ * Stable across renders (useCallback), so it is safe in effect dependencies.
+ */
 export function useInvalidateHistory(
   workspaceId: string | null,
   module: HistoryModule,
 ): () => void {
   const queryClient = useQueryClient();
-  return () => {
+  return useCallback(() => {
     void queryClient.invalidateQueries({
       queryKey: historyKeys.list(workspaceId ?? "", module),
     });
-  };
+  }, [queryClient, workspaceId, module]);
 }
 
 function useHistoryMutation<TArgs>(
