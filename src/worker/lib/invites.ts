@@ -33,3 +33,21 @@ export function isInviteUsable(
 export function buildInviteUrl(origin: string, rawToken: string): string {
   return `${origin.replace(/\/+$/, "")}/invite/${encodeURIComponent(rawToken)}`;
 }
+
+/**
+ * The invite email (Phase 8c). Plain text, and deliberately incurious: the
+ * workspace name is not in it. An invite address can be mistyped, and the
+ * link discloses nothing until someone signs in and accepts it — a mail that
+ * named the workspace would be the one part of the flow that leaked to a
+ * stranger.
+ */
+export function inviteEmailBody(inviteUrl: string): string {
+  return [
+    "You have been invited to a workspace on OpenRefs.",
+    "",
+    "Open this link to join:",
+    inviteUrl,
+    "",
+    "The link expires in seven days. If you were not expecting it, ignore this email.",
+  ].join("\n");
+}

@@ -54,7 +54,13 @@ import {
 } from "../lib/authorization";
 import { decryptSecret, encryptSecret, randomToken, sha256Hex } from "../lib/crypto";
 import { deleteWorkspaceEverywhere } from "../lib/deletion";
-import { buildInviteUrl, inviteExpiresAt, isInviteUsable } from "../lib/invites";
+import { isEmailConfigured, sendEmail } from "../lib/email";
+import {
+  buildInviteUrl,
+  inviteEmailBody,
+  inviteExpiresAt,
+  isInviteUsable,
+} from "../lib/invites";
 import { maskLogin } from "../lib/mask";
 import { readJson, readParams } from "../lib/validate";
 import { API_KEY_PREFIX, requireSession } from "../middleware/auth";
@@ -536,14 +542,34 @@ app.post("/:id/invites", async (c) => {
     .where(eq(invites.id, inviteId))
     .limit(1);
 
+  // The only time this token is ever readable.
+  const inviteUrl = buildInviteUrl(new URL(c.req.url).origin, token);
+
+  /*
+   * Mailing the link is a convenience layered on top of the copy-link flow,
+   * never a precondition for it: the invite row already exists, so a provider
+   * outage must not turn a successful invite into a failed request. `sendEmail`
+   * cannot throw, and its result only decides what we *claim* below.
+   *
+   * `emailSent` is gated on `isEmailConfigured` rather than on `sent` alone,
+   * because the console provider succeeds by writing a log line — true enough
+   * for an operator tailing the Worker, and quite untrue for the person who
+   * would be told "we emailed them".
+   */
+  const delivery = await sendEmail(c.env, {
+    to: email,
+    subject: "You have been invited to an OpenRefs workspace",
+    text: inviteEmailBody(inviteUrl),
+  });
+
   const body: CreatedInvite = {
     id: inviteId,
     email,
     role,
     expiresAt: expiresAt.getTime(),
     createdAt: (created?.createdAt ?? new Date()).getTime(),
-    // The only time this token is ever readable.
-    inviteUrl: buildInviteUrl(new URL(c.req.url).origin, token),
+    inviteUrl,
+    emailSent: isEmailConfigured(c.env) && delivery.sent,
   };
   return c.json(body, 201);
 });

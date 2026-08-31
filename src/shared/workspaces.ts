@@ -103,6 +103,16 @@ export interface WorkspaceInvite {
 /** The plaintext token is in `inviteUrl` and is never recoverable afterwards. */
 export interface CreatedInvite extends WorkspaceInvite {
   inviteUrl: string;
+  /**
+   * Whether the link was also emailed to the invitee (Phase 8c).
+   *
+   * False on a deployment with no mail provider configured, and false when a
+   * configured provider refused — copying `inviteUrl` is still the primary
+   * flow and always works, so this is a "we also did this" flag rather than a
+   * success condition. Optional and additive: absent and `false` mean the same
+   * thing, so every response predating the field stays valid.
+   */
+  emailSent?: boolean;
 }
 
 export interface ApiKeySummary {
