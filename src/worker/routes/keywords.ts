@@ -21,12 +21,15 @@ import { RELATED_KEYWORDS_MAX_DEPTH } from "../dataforseo";
 import { readQuery } from "../lib/validate";
 import {
   authorizeWorkspace,
-  booleanParam,
+  freshnessShape,
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
+  withFreshness,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
+import { historyContext, recordSearch } from "../services/history";
 import {
   keywordIdeas,
   keywordOverview,
@@ -45,7 +48,7 @@ const keywordQuerySchema = marketQuerySchema.extend({
 });
 
 export const keywordListQuerySchema = keywordQuerySchema
-  .extend({ fresh: booleanParam })
+  .extend(freshnessShape)
   .extend(pagingQuerySchema.shape)
   .extend(rangeQuerySchema.shape)
   .extend({
@@ -54,53 +57,81 @@ export const keywordListQuerySchema = keywordQuerySchema
     exclude: z.string().trim().min(1).optional(),
   });
 
-export const keywordOverviewQuerySchema = keywordQuerySchema.extend({
-  fresh: booleanParam,
-});
+export const keywordOverviewQuerySchema = keywordQuerySchema.extend(freshnessShape);
 
-export const keywordSerpQuerySchema = keywordQuerySchema.extend({
-  fresh: booleanParam,
+export const keywordSerpQuerySchema = keywordQuerySchema.extend(freshnessShape).extend({
   device: z.enum(["desktop", "mobile"]).optional(),
 });
 
+/**
+ * GET /api/v1/keywords/overview
+ *
+ * The one keyword route that records history: a seed keyword lookup is what a
+ * user thinks of as "a search", while the ideas/suggestions/related tabs are
+ * views over that same seed and would fill the trail with near-duplicates.
+ */
 keywords.get("/overview", async (c) => {
-  const query = readQuery(c, keywordOverviewQuerySchema);
+  const query = readQuery(c, withFreshness(keywordOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordOverview(c.env, db, query));
+  const body = await keywordOverview(c.env, db, resolveFreshness(query));
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "keywords",
+    {
+      keyword: body.keyword,
+      location: query.location,
+      language: query.language,
+    },
+    // Nulls throughout for a keyword the provider has never seen. Recorded
+    // anyway: the search happened, and the upsert keeps any better summary a
+    // previous run captured.
+    {
+      volume: body.searchVolume,
+      difficulty: body.keywordDifficulty,
+      cpc: body.cpc,
+      intent: body.intent,
+    },
+  );
+
+  return c.json(body);
 });
 
 keywords.get("/ideas", async (c) => {
-  const query = readQuery(c, keywordListQuerySchema);
+  const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordIdeas(c.env, db, query));
+  return c.json(await keywordIdeas(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/suggestions", async (c) => {
-  const query = readQuery(c, keywordListQuerySchema);
+  const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordSuggestions(c.env, db, query));
+  return c.json(await keywordSuggestions(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/related", async (c) => {
   const query = readQuery(
     c,
-    keywordListQuerySchema.extend({
-      depth: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .max(RELATED_KEYWORDS_MAX_DEPTH)
-        .optional(),
-    }),
+    withFreshness(
+      keywordListQuerySchema.extend({
+        depth: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(RELATED_KEYWORDS_MAX_DEPTH)
+          .optional(),
+      }),
+    ),
   );
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordRelated(c.env, db, query));
+  return c.json(await keywordRelated(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/serp", async (c) => {
-  const query = readQuery(c, keywordSerpQuerySchema);
+  const query = readQuery(c, withFreshness(keywordSerpQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordSerp(c.env, db, query));
+  return c.json(await keywordSerp(c.env, db, resolveFreshness(query)));
 });
 
 export default keywords;

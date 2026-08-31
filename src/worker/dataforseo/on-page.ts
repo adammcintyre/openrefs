@@ -945,6 +945,7 @@ export function createOnPageApi(client: DataForSeoClient): OnPageApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
       const parsed = contentParsingResultSchema.safeParse(response.results[0]);
       // No result at all is the same outcome as an unparseable one: null, not

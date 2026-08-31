@@ -30,6 +30,7 @@ function fakeClient(result: unknown): {
         costUsd: 0.01212,
         cached: false,
         stale: false,
+        fetchedAt: Date.now(),
         statusCode: 20000,
         statusMessage: "Ok.",
       };

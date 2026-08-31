@@ -93,9 +93,12 @@ function fakeDb(options: { capUsd?: number; spentUsd?: number } = {}) {
   return { db: db as unknown as Db, usage };
 }
 
-/** A v2 entry aged `ageMs`, whose soft TTL was `softTtlMs`. */
-function storedEntry(results: unknown[], ageMs: number, softTtlMs: number): string {
-  const cachedAt = Date.now() - ageMs;
+/** A v2 entry written at `cachedAt`, whose soft TTL was `softTtlMs`. */
+function entryAt(
+  results: unknown[],
+  cachedAt: number,
+  softTtlMs: number,
+): string {
   return JSON.stringify({
     v: 2,
     results,
@@ -104,6 +107,11 @@ function storedEntry(results: unknown[], ageMs: number, softTtlMs: number): stri
     cachedAt,
     softExpiresAt: cachedAt + softTtlMs,
   });
+}
+
+/** A v2 entry aged `ageMs`, whose soft TTL was `softTtlMs`. */
+function storedEntry(results: unknown[], ageMs: number, softTtlMs: number): string {
+  return entryAt(results, Date.now() - ageMs, softTtlMs);
 }
 
 /** A DataForSEO envelope, as `fetch` would resolve it. */
@@ -341,6 +349,159 @@ describe("stale-if-error fallback matrix", () => {
     expect(res.cached).toBe(false);
     expect(res.stale).toBe(false);
     expect(puts).toEqual([]);
+  });
+});
+
+/**
+ * `allowStale` — the other half of the cache contract, added for search
+ * history. Where stale-if-error serves an old entry because the refresh
+ * *failed*, this serves one because the caller asked to spend nothing: a click
+ * on a past search is a request to see that answer again, not to buy a newer
+ * one.
+ *
+ * The invariant these pin: **an allowStale request never calls upstream while a
+ * usable entry exists, and never refuses to when one does not.**
+ */
+describe("allowStale", () => {
+  const STALE_REQUEST = { ...REQUEST, allowStale: true };
+
+  it("serves a soft-expired entry at $0, flagged stale, with no network call", async () => {
+    const { kv, store } = fakeKv();
+    const cachedAt = Date.now() - 40 * DAY_MS;
+    store.set(await keyFor(), entryAt([{ items: ["old"] }], cachedAt, 30 * DAY_MS));
+    const { db, usage } = fakeDb();
+    const fetchSpy = vi.fn();
+
+    const res = await build(kv, db, fetchSpy).request(STALE_REQUEST);
+
+    // The whole point: reopening a search is free, so nothing may be bought.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.cached).toBe(true);
+    expect(res.stale).toBe(true);
+    expect(res.costUsd).toBe(0);
+    expect(res.results).toEqual([{ items: ["old"] }]);
+    // The original fetch, not this request — this is the date behind
+    // "updated 40 days ago" next to the Refresh button.
+    expect(res.fetchedAt).toBe(cachedAt);
+    expect(usage).toEqual([
+      { workspaceId: "ws-1", endpoint: ENDPOINT, costUsd: 0, cached: true },
+    ]);
+  });
+
+  it("is a permission, not a demand: with no entry at all it fetches and bills", async () => {
+    const { kv, puts } = fakeKv();
+    const { db, usage } = fakeDb();
+    const fetchSpy = vi.fn(async () => envelope([{ items: ["new"] }]));
+
+    const res = await build(kv, db, fetchSpy).request(STALE_REQUEST);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(res.cached).toBe(false);
+    expect(res.stale).toBe(false);
+    expect(res.results).toEqual([{ items: ["new"] }]);
+    expect(usage).toEqual([
+      { workspaceId: "ws-1", endpoint: ENDPOINT, costUsd: 0.0102, cached: false },
+    ]);
+    // And the answer is cached, so the *next* reopen is the free one.
+    expect(puts).toHaveLength(1);
+  });
+
+  it("past the 90-day ceiling: deletes the entry and buys a new answer", async () => {
+    // The qualification on "a history click never bills". After
+    // CACHE_MAX_AGE_MS there is nothing left to reopen, so a reopened search
+    // costs exactly what a new search costs — which is the honest outcome, not
+    // a failure.
+    const { kv, store, deletes } = fakeKv();
+    const key = await keyFor();
+    store.set(
+      key,
+      storedEntry([{ items: ["ancient"] }], CACHE_MAX_AGE_MS + DAY_MS, 30 * DAY_MS),
+    );
+    const { db, usage } = fakeDb();
+    const fetchSpy = vi.fn(async () => envelope([{ items: ["new"] }]));
+
+    const res = await build(kv, db, fetchSpy).request(STALE_REQUEST);
+
+    expect(deletes).toEqual([key]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(res.results).toEqual([{ items: ["new"] }]);
+    expect(res.cached).toBe(false);
+    expect(usage.at(-1)?.costUsd).toBe(0.0102);
+  });
+
+  it("leaves a within-TTL hit exactly as it was — not every cache hit is stale", async () => {
+    const { kv, store } = fakeKv();
+    store.set(await keyFor(), storedEntry([{ items: ["recent"] }], DAY_MS, 30 * DAY_MS));
+    const { db } = fakeDb();
+    const fetchSpy = vi.fn();
+
+    const res = await build(kv, db, fetchSpy).request(STALE_REQUEST);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.cached).toBe(true);
+    // `stale` means "older than we would normally serve", and this is not.
+    expect(res.stale).toBe(false);
+  });
+
+  it("refuses to be combined with fresh, before it touches KV or the wire", async () => {
+    const { kv } = fakeKv();
+    const { db, usage } = fakeDb();
+    const fetchSpy = vi.fn();
+
+    await expect(
+      build(kv, db, fetchSpy).request({ ...REQUEST, fresh: true, allowStale: true }),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    // The routes answer 422 for this pair; reaching the client means a wrapper
+    // built it, so nothing is spent and nothing is metered.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(usage).toEqual([]);
+  });
+});
+
+describe("fetchedAt", () => {
+  it("is the original fetch on a within-TTL cache hit, not the read time", async () => {
+    const { kv, store } = fakeKv();
+    const cachedAt = Date.now() - 3 * DAY_MS;
+    store.set(await keyFor(), entryAt([{ items: ["c"] }], cachedAt, 30 * DAY_MS));
+    const { db } = fakeDb();
+
+    const res = await build(kv, db, vi.fn()).request(REQUEST);
+
+    expect(res.fetchedAt).toBe(cachedAt);
+  });
+
+  it("is now on a live fetch, and matches the cachedAt it writes", async () => {
+    const { kv, store } = fakeKv();
+    const key = await keyFor();
+    const { db } = fakeDb();
+    const before = Date.now();
+
+    const res = await build(kv, db, vi.fn(async () => envelope([{ items: ["n"] }]))).request(
+      REQUEST,
+    );
+
+    expect(res.fetchedAt).toBeGreaterThanOrEqual(before);
+    expect(res.fetchedAt).toBeLessThanOrEqual(Date.now());
+    // One reading for both, so re-reading this entry reports the identical
+    // timestamp rather than one a few milliseconds earlier.
+    const written = JSON.parse(store.get(key) as string) as { cachedAt: number };
+    expect(written.cachedAt).toBe(res.fetchedAt);
+  });
+
+  it("is the stale copy's own age on the stale-if-error path", async () => {
+    const { kv, store } = fakeKv();
+    const cachedAt = Date.now() - 40 * DAY_MS;
+    store.set(await keyFor(), entryAt([{ items: ["old"] }], cachedAt, 30 * DAY_MS));
+    const { db } = fakeDb();
+    const fetchSpy = vi.fn(async () => {
+      throw timeoutError();
+    });
+
+    const res = await build(kv, db, fetchSpy).request(REQUEST);
+
+    expect(res.stale).toBe(true);
+    expect(res.fetchedAt).toBe(cachedAt);
   });
 });
 

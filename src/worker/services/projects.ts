@@ -14,6 +14,7 @@ import { projects, rankSnapshots, trackedKeywords } from "../../db";
 import type { Project, ProjectListResponse } from "../../shared/projects";
 import type {
   RankPoint,
+  RankSummaryResponse,
   TrackedKeywordRow,
   TrackedKeywordsResponse,
 } from "../../shared/tracking";
@@ -251,6 +252,121 @@ function parseFeatures(raw: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Rank summary                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Days the summary window may cover. Clamped, never refused. */
+export const RANK_SUMMARY_MIN_DAYS = 7;
+export const RANK_SUMMARY_MAX_DAYS = 180;
+export const RANK_SUMMARY_DEFAULT_DAYS = 30;
+
+/** `days`, clamped to what the rollup will actually serve. */
+export function clampSummaryDays(days: number | undefined): number {
+  const wanted = days ?? RANK_SUMMARY_DEFAULT_DAYS;
+  if (!Number.isFinite(wanted)) return RANK_SUMMARY_DEFAULT_DAYS;
+  return Math.min(
+    RANK_SUMMARY_MAX_DAYS,
+    Math.max(RANK_SUMMARY_MIN_DAYS, Math.trunc(wanted)),
+  );
+}
+
+/**
+ * The window's inclusive start date, `YYYY-MM-DD` UTC.
+ *
+ * **A date cutoff from today, not "the newest N distinct dates."** The two
+ * differ for a project that stopped being checked: the cutoff shows the gap —
+ * a chart that trails off, which is true and worth seeing — while "newest N
+ * dates" would quietly stretch three months of stale checks across a 30-day
+ * axis and make an abandoned project look current. `days` counts back
+ * inclusively, so `days=7` covers today and the six days before it.
+ */
+export function rankSummarySince(days: number, now: Date): string {
+  return shiftIsoDate(toIsoDate(now), -(days - 1)) ?? toIsoDate(now);
+}
+
+/** One decimal place, or null. Positions are 1–100; more precision is noise. */
+function roundPosition(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.round(value * 10) / 10;
+}
+
+/**
+ * GET /api/v1/projects/:id/rank/summary
+ *
+ * One grouped query over `rank_snapshots`, joined to `tracked_keywords` for the
+ * project. Free: pure D1, no provider call, no `ResultMeta` — which is what
+ * lets the overview chart render on every visit.
+ *
+ * Days with no check are **absent** rather than zero-filled. A project first
+ * checked on a Tuesday has no Monday row, and inventing one would draw a line
+ * to zero tracked keywords — a cliff that never happened. The shared type says
+ * so too: plot by `date`, never by index.
+ */
+export async function rankSummary(
+  db: Db,
+  workspaceId: string,
+  projectId: string,
+  days: number,
+  now: Date = new Date(),
+): Promise<RankSummaryResponse> {
+  await requireProject(db, workspaceId, projectId);
+
+  const since = rankSummarySince(days, now);
+
+  const rows = await db.all<{
+    date: string;
+    tracked: number;
+    ranked: number;
+    total_position: number | null;
+    top3: number;
+    top10: number;
+    top100: number;
+  }>(sql`
+    SELECT s.date AS date,
+           COUNT(*) AS tracked,
+           COUNT(s.position) AS ranked,
+           SUM(s.position) AS total_position,
+           SUM(CASE WHEN s.position <= 3 THEN 1 ELSE 0 END) AS top3,
+           SUM(CASE WHEN s.position <= 10 THEN 1 ELSE 0 END) AS top10,
+           SUM(CASE WHEN s.position <= 100 THEN 1 ELSE 0 END) AS top100
+      FROM rank_snapshots s
+     WHERE s.date >= ${since}
+       AND s.tracked_keyword_id IN (
+             SELECT id FROM tracked_keywords WHERE project_id = ${projectId}
+           )
+     GROUP BY s.date
+     ORDER BY s.date ASC
+  `);
+
+  return {
+    days,
+    points: rows.map((row) => {
+      const ranked = Number(row.ranked ?? 0);
+      return {
+        date: row.date,
+        /*
+         * AVG over the positions that ranked, computed from SUM/COUNT rather
+         * than SQL's AVG so the null case is explicit: a day where nothing
+         * ranked has no average, and reporting 0 would put that day at the top
+         * of a chart where lower is better — the best day the project ever had,
+         * drawn from an absence.
+         */
+        avgPosition:
+          ranked === 0
+            ? null
+            : roundPosition(Number(row.total_position ?? 0) / ranked),
+        top3: Number(row.top3 ?? 0),
+        top10: Number(row.top10 ?? 0),
+        top100: Number(row.top100 ?? 0),
+        // Every snapshot that day, ranked or not — the denominator the bands
+        // are read against.
+        tracked: Number(row.tracked ?? 0),
+      };
+    }),
+  };
 }
 
 /** GET /api/v1/projects — newest first, with counts and last-checked. */

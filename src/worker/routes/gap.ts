@@ -26,18 +26,23 @@ import {
   GAP_MODES,
 } from "../../shared/gap";
 import { PAGE_INTERSECTION_MODES, createDataForSeoApi } from "../dataforseo";
+import { fetchedAtIso } from "../dataforseo/schema";
 import { attachmentHeader, slugify, toCsv } from "../lib/csv";
 import {
   authorizeWorkspace,
-  booleanParam,
   domainParam,
+  freshnessShape,
   marketQuerySchema,
   normalizeDomain,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
+  toFreshness,
+  withFreshness,
 } from "../lib/research";
 import { readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
+import { historyContext, recordSearch } from "../services/history";
 import {
   BY_VOLUME_DESC,
   ORGANIC_ONLY,
@@ -102,8 +107,8 @@ const gapKeywordsQuerySchema = marketQuerySchema
     target: domainParam,
     competitors: competitorsParam,
     mode: z.enum(GAP_MODES).optional().default("missing"),
-    fresh: booleanParam,
   })
+  .extend(freshnessShape)
   .extend(pagingQuerySchema.shape)
   .extend(rangeQuerySchema.shape)
   .extend({
@@ -142,8 +147,8 @@ const gapPagesQuerySchema = marketQuerySchema
               .filter((entry) => entry.length > 0),
       ),
     intersectionMode: z.enum(PAGE_INTERSECTION_MODES).optional(),
-    fresh: booleanParam,
   })
+  .extend(freshnessShape)
   .extend(pagingQuerySchema.shape)
   .extend(rangeQuerySchema.shape)
   .extend({
@@ -153,11 +158,41 @@ const gapPagesQuerySchema = marketQuerySchema
 
 /**
  * GET /api/v1/gap/keywords
+ *
+ * Records history; `/gap/pages` deliberately does not. Pages compares a list of
+ * URLs rather than a target against competitors — different inputs, a different
+ * question, and nothing a keyword-gap trail row could re-run.
  */
 gap.get("/keywords", async (c) => {
-  const query = readQuery(c, gapKeywordsQuerySchema);
+  const query = readQuery(c, withFreshness(gapKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await gapKeywords(c.env, db, query));
+  const body = await gapKeywords(c.env, db, resolveFreshness(query));
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "gap",
+    {
+      target: query.target,
+      // The service's list, not the caller's: de-duplicated and with the
+      // target itself removed, which is the comparison that actually ran and
+      // the column order the row must reproduce.
+      competitors: body.competitors,
+      location: query.location,
+      language: query.language,
+      // `mode` is excluded on purpose — see GapHistoryParams. It selects a view
+      // over rows this query already covers, so switching modes is not a new
+      // search and must not be a second trail row.
+    },
+    {
+      // Before the mode filter, which is what makes the number comparable
+      // between a row saved in `missing` and the same search seen in `all`.
+      keywordCount: (body.itemsCount ?? body.items.length) + body.filteredOut,
+      competitorCount: body.competitors.length,
+    },
+  );
+
+  return c.json(body);
 });
 
 /**
@@ -168,11 +203,16 @@ gap.get("/keywords", async (c) => {
  * `GAP_CSV_MAX_ROWS` because a spreadsheet is not paged.
  */
 gap.get("/keywords/export.csv", async (c) => {
-  const query = readQuery(c, gapKeywordsQuerySchema);
+  const query = readQuery(c, withFreshness(gapKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   // The same fan-out `/gap/keywords` runs, one level below the response
   // envelope: the rows are all this needs, and the page size is its own.
-  const result = await fetchGapKeywords(c.env, db, query, GAP_CSV_MAX_ROWS);
+  const result = await fetchGapKeywords(
+    c.env,
+    db,
+    resolveFreshness(query),
+    GAP_CSV_MAX_ROWS,
+  );
 
   const csv = toCsv(
     gapCsvHeader(result.competitors),
@@ -227,7 +267,7 @@ export function gapCsvRow(row: GapKeywordRow): unknown[] {
  * "you" — every page is one of the compared set — so it carries no mode.
  */
 gap.get("/pages", async (c) => {
-  const query = readQuery(c, gapPagesQuerySchema);
+  const query = readQuery(c, withFreshness(gapPagesQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   const dfs = await createDataForSeoApi(c.env, db, query.workspace);
 
@@ -242,7 +282,7 @@ gap.get("/pages", async (c) => {
     offset: query.offset,
     filters: gapKeywordFilters(query),
     sorts: BY_VOLUME_DESC,
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const items: GapPageRow[] = result.items.map((row) => ({
@@ -270,6 +310,8 @@ gap.get("/pages", async (c) => {
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });

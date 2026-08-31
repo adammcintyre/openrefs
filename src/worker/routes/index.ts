@@ -13,6 +13,7 @@ import domains from "./domains";
 import gap from "./gap";
 import gsc from "./gsc";
 import health from "./health";
+import history from "./history";
 import keywords from "./keywords";
 import mcp from "./mcp";
 import meta from "./meta";
@@ -53,6 +54,9 @@ export const routeModules: RouteModule[] = [
   { path: "/backlinks", router: backlinks },
   { path: "/gap", router: gap },
   { path: "/collections", router: collections },
+  // The research trail. Written by the keywords/domains/gap routes, read and
+  // cleared here; pure D1, so nothing under it can spend.
+  { path: "/history", router: history },
   { path: "/content", router: content },
   { path: "/projects", router: projects },
   /*

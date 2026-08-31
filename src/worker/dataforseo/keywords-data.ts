@@ -124,6 +124,7 @@ export function createKeywordsDataApi(
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
   };

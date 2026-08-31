@@ -22,17 +22,23 @@ import type {
 import { createDataForSeoApi } from "../dataforseo";
 import type { DataForSeoApi } from "../dataforseo";
 import { RELEVANT_PAGES_FIELDS } from "../dataforseo";
+import { fetchedAtIso } from "../dataforseo/schema";
 import { readQuery } from "../lib/validate";
 import {
   authorizeWorkspace,
   booleanParam,
   domainParam,
+  freshnessShape,
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
+  toFreshness,
+  withFreshness,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
 import { domainKeywords, domainOverview, toRankMetrics } from "../services/domains";
+import { historyContext, recordSearch } from "../services/history";
 import type { AppEnv } from "../types";
 
 const domains = new Hono<AppEnv>();
@@ -83,10 +89,9 @@ export function marketLanguage(
   return market.languages[0] ?? wanted;
 }
 
-const domainQuerySchema = marketQuerySchema.extend({
-  domain: domainParam,
-  fresh: booleanParam,
-});
+const domainQuerySchema = marketQuerySchema
+  .extend({ domain: domainParam })
+  .extend(freshnessShape);
 
 const listQuerySchema = domainQuerySchema.extend(pagingQuerySchema.shape);
 
@@ -107,19 +112,57 @@ export const domainKeywordsQuerySchema = listQuerySchema
     exclude: z.string().trim().min(1).optional(),
   });
 
+/**
+ * GET /api/v1/domains/overview
+ *
+ * The module's headline metrics, and the one domain route that records
+ * history: the tabs below it are views of the same target in the same market,
+ * so recording each of them would fill the trail with one search five times.
+ */
 domains.get("/overview", async (c) => {
-  const query = readQuery(c, domainOverviewQuerySchema);
+  const query = readQuery(c, withFreshness(domainOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await domainOverview(c.env, db, query));
+  const body = await domainOverview(c.env, db, resolveFreshness(query));
+
+  recordSearch(
+    historyContext(c, db),
+    query.workspace,
+    "domains",
+    // `query.domain` is already through `normalizeDomain`, which is the form
+    // the module's URL state stores — so a trail row round-trips into the
+    // search box unchanged.
+    {
+      target: query.domain,
+      location: query.location,
+      language: query.language,
+    },
+    {
+      /*
+       * Structurally null: Domain Score is a link-graph metric from the
+       * Backlinks API, and this endpoint is a Labs traffic query that does not
+       * carry one. Buying a second call to fill in a number for a list row
+       * would make a free trail expensive, which is the opposite of the point.
+       * The field stays in the shape because the summary is a contract, and
+       * null there honestly means "not measured here".
+       */
+      domainScore: null,
+      organicTraffic: body.organic.traffic,
+      organicKeywords: body.organic.keywordCount,
+    },
+  );
+
+  return c.json(body);
 });
 
 domains.get("/history", async (c) => {
   const query = readQuery(
     c,
-    domainQuerySchema.extend({
-      dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    }),
+    withFreshness(
+      domainQuerySchema.extend({
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      }),
+    ),
   );
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
@@ -129,7 +172,7 @@ domains.get("/history", async (c) => {
     languageCode: query.language,
     dateFrom: query.dateFrom,
     dateTo: query.dateTo,
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainHistoryResponse = {
@@ -148,18 +191,20 @@ domains.get("/history", async (c) => {
       })),
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
 
 domains.get("/keywords", async (c) => {
-  const query = readQuery(c, domainKeywordsQuerySchema);
+  const query = readQuery(c, withFreshness(domainKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await domainKeywords(c.env, db, query));
+  return c.json(await domainKeywords(c.env, db, resolveFreshness(query)));
 });
 
 domains.get("/pages", async (c) => {
-  const query = readQuery(c, listQuerySchema);
+  const query = readQuery(c, withFreshness(listQuerySchema));
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
   const result = await dfs.labs.googleRelevantPagesLive({
@@ -169,7 +214,7 @@ domains.get("/pages", async (c) => {
     limit: query.limit,
     offset: query.offset,
     sorts: [{ field: RELEVANT_PAGES_FIELDS.organicEtv, direction: "desc" }],
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainPagesResponse = {
@@ -187,12 +232,14 @@ domains.get("/pages", async (c) => {
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
 
 domains.get("/competitors", async (c) => {
-  const query = readQuery(c, listQuerySchema);
+  const query = readQuery(c, withFreshness(listQuerySchema));
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
   const result = await dfs.labs.googleCompetitorsDomainLive({
@@ -202,7 +249,7 @@ domains.get("/competitors", async (c) => {
     limit: query.limit,
     offset: query.offset,
     sorts: [{ field: "metrics.organic.count", direction: "desc" }],
-    fresh: query.fresh,
+    ...toFreshness(query),
   });
 
   const body: DomainCompetitorsResponse = {
@@ -227,6 +274,8 @@ domains.get("/competitors", async (c) => {
     offset: query.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(body);
 });
@@ -245,9 +294,12 @@ domains.get("/competitors", async (c) => {
 domains.get("/countries", async (c) => {
   const query = readQuery(
     c,
-    marketQuerySchema
-      .omit({ location: true })
-      .extend({ domain: domainParam, fresh: booleanParam }),
+    withFreshness(
+      marketQuerySchema
+        .omit({ location: true })
+        .extend({ domain: domainParam })
+        .extend(freshnessShape),
+    ),
   );
   const { dfs } = await open(c.env, c.get("session"), query.workspace);
 
@@ -258,7 +310,7 @@ domains.get("/countries", async (c) => {
         target: query.domain,
         locationCode: market.locationCode,
         languageCode,
-        fresh: query.fresh,
+        ...toFreshness(query),
       });
       return { market, result, languageCode };
     }),
@@ -268,6 +320,16 @@ domains.get("/countries", async (c) => {
   const failedCountries: string[] = [];
   let costUsd = 0;
   let allCached = true;
+  let anyStale = false;
+  /*
+   * The OLDEST market's fetch, not the newest.
+   *
+   * This one body is composed from ten separately cached answers, so there is
+   * no single moment it was fetched. "Updated N days ago" has to be true of the
+   * whole table, and only the oldest leg makes it true — claiming the newest
+   * would date the report by its freshest row.
+   */
+  let oldestFetchedAtMs: number | null = null;
 
   for (const [index, outcome] of settled.entries()) {
     const market = COUNTRY_BREAKDOWN_MARKETS[index];
@@ -281,6 +343,13 @@ domains.get("/countries", async (c) => {
     const { result, languageCode } = outcome.value;
     costUsd += result.costUsd;
     allCached &&= result.cached;
+    anyStale ||= result.stale === true;
+    if (
+      typeof result.fetchedAtMs === "number" &&
+      (oldestFetchedAtMs === null || result.fetchedAtMs < oldestFetchedAtMs)
+    ) {
+      oldestFetchedAtMs = result.fetchedAtMs;
+    }
     items.push({
       locationCode: market.locationCode,
       countryIsoCode: market.countryIsoCode,
@@ -302,6 +371,10 @@ domains.get("/countries", async (c) => {
     costUsd,
     // "Cached" only if nothing was paid for; an empty success set is not cached.
     cached: items.length > 0 && allCached,
+    // One stale leg makes the whole table older than we would normally serve.
+    stale: anyStale,
+    fetchedAt:
+      oldestFetchedAtMs === null ? null : new Date(oldestFetchedAtMs).toISOString(),
   };
   return c.json(body);
 });

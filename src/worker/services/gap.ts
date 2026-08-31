@@ -88,7 +88,10 @@ export interface GapKeywordsInput {
   mode: GapMode;
   limit: number;
   offset: number;
+  /** Bypass the cache and buy a new answer. */
   fresh?: boolean;
+  /** Serve a cached answer past its normal lifetime, spending nothing. */
+  allowStale?: boolean;
   minVolume?: number;
   maxVolume?: number;
   minDifficulty?: number;
@@ -313,6 +316,16 @@ export interface GapResult {
   totalCount: number | null;
   costUsd: number;
   cached: boolean;
+  /** True when ANY pairwise leg served an entry past its normal lifetime. */
+  stale: boolean;
+  /**
+   * The OLDEST leg's fetch, epoch ms, or null when no leg reported one.
+   *
+   * A gap table is composed from N separately cached pairwise answers, so
+   * there is no single moment it was fetched. Only the oldest leg makes
+   * "updated N days ago" true of the whole table.
+   */
+  fetchedAtMs: number | null;
   competitors: string[];
 }
 
@@ -371,6 +384,7 @@ export async function fetchGapKeywords(
           : baseFilters,
         sorts: BY_VOLUME_DESC,
         fresh: input.fresh,
+        allowStale: input.allowStale,
       });
       return { competitorIndex, result };
     }),
@@ -400,6 +414,16 @@ export async function fetchGapKeywords(
     ),
     costUsd: settled.reduce((total, { result }) => total + result.costUsd, 0),
     cached: settled.every(({ result }) => result.cached),
+    stale: settled.some(({ result }) => result.stale === true),
+    fetchedAtMs: settled.reduce<number | null>(
+      (oldest, { result }) =>
+        typeof result.fetchedAtMs !== "number"
+          ? oldest
+          : oldest === null
+            ? result.fetchedAtMs
+            : Math.min(oldest, result.fetchedAtMs),
+      null,
+    ),
     competitors,
   };
 }
@@ -426,5 +450,10 @@ export async function gapKeywords(
     offset: input.offset,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale,
+    fetchedAt:
+      result.fetchedAtMs === null
+        ? null
+        : new Date(result.fetchedAtMs).toISOString(),
   };
 }

@@ -70,6 +70,8 @@ import {
   AUDIT_STATUSES,
 } from "../shared/audits";
 import {
+  BACKLINK_SORTS,
+  BACKLINKS_SPAM_HIDE_THRESHOLD,
   BACKLINKS_HISTORY_MIN_DATE,
   BACKLINKS_LIST_MODES,
   BACKLINKS_SCORES_MAX_TARGETS,
@@ -92,6 +94,12 @@ import {
   GAP_MODES,
 } from "../shared/gap";
 import {
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_KEEP,
+  HISTORY_MAX_LIMIT,
+  HISTORY_MODULES,
+} from "../shared/history";
+import {
   GSC_DATA_LAG_DAYS,
   GSC_DEFAULT_RANGE_DAYS,
   GSC_OPPORTUNITY_RULES,
@@ -99,6 +107,11 @@ import {
 } from "../shared/gsc";
 import { DEVICES, PROJECT_NAME_MAX_LENGTH } from "../shared/projects";
 import { TRACKED_KEYWORDS_BULK_MAX } from "../shared/tracking";
+import {
+  RANK_SUMMARY_DEFAULT_DAYS,
+  RANK_SUMMARY_MAX_DAYS,
+  RANK_SUMMARY_MIN_DAYS,
+} from "./services/projects";
 import { APP_VERSION } from "../shared/version";
 import { WORKSPACE_ROLES } from "../shared/workspaces";
 import { LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECONDS } from "./lib/rate-limit";
@@ -709,6 +722,12 @@ const TAGS: OpenApiTag[] = [
       "Saved keyword lists. Pure storage: no DataForSEO call, no cost, no spend cap.",
   },
   {
+    name: "History",
+    description:
+      "The workspace's research trail — every Keyword Research, Domain Overview " +
+      "and Gap Analysis search, recorded automatically and re-openable for free.",
+  },
+  {
     name: "Content Discovery",
     description:
       "Pages winning traffic without much authority — the topics a small site can realistically take.",
@@ -849,7 +868,24 @@ const PARAMETERS: Record<string, ParameterObject> = {
       description:
         "Bypass the cache and buy a new answer. `?fresh`, `?fresh=true` and " +
         "`?fresh=1` all mean true. Costs money every time — omit it unless the " +
-        "user asked for a refresh.",
+        "user asked for a refresh. Cannot be combined with `stale`: the two are " +
+        "opposite instructions, so sending both is a 422.",
+    },
+  ),
+  StaleQuery: queryParam(
+    "stale",
+    { type: "boolean" },
+    {
+      description:
+        "Serve the cached answer **even past its normal lifetime**, spending " +
+        "nothing and making no provider call. This is how a search is re-opened " +
+        "from `/history` for free; the response carries `stale: true` and a " +
+        "`fetchedAt` saying how old it really is.\n\n" +
+        "A permission rather than a demand: with nothing cached — never fetched, " +
+        "or older than the 90-day hard cap, at which point the entry is deleted " +
+        "on read — the request falls through to a normal billed fetch. So a " +
+        "search re-opened after 90 days costs what a new one costs.\n\n" +
+        "Cannot be combined with `fresh` (422).",
     },
   ),
 };
@@ -944,14 +980,24 @@ const SCHEMAS: Record<string, JsonSchema> = {
       costUsd: num("USD billed for this response. Always 0 when `cached` is true."),
       cached: bool("True when the answer came from cache rather than the provider."),
       stale: bool(
-        "True when the cache entry served had already passed its normal lifetime " +
-          "and was returned because refreshing it timed out upstream. `cached` is " +
-          "true alongside it. Never set on a `fresh=true` request, which must fail " +
-          "rather than return the copy the caller paid to bypass. Absent means false.",
+        "True when the cache entry served had already passed its normal lifetime. " +
+          "Two paths set it: refreshing it timed out upstream, or the caller asked " +
+          "for the old copy outright with `stale=true`. `cached` is true alongside " +
+          "it. Never set on a `fresh=true` request, which must fail rather than " +
+          "return the copy the caller paid to bypass. Absent means false.",
+      ),
+      fetchedAt: nullableStr(
+        "When the underlying payload was fetched from the provider, ISO 8601 UTC. " +
+          "On a cache hit this is the **original** fetch, not this request — it is " +
+          "the date behind an “Updated N days ago” chip next to a Refresh " +
+          "button. Nullable because one endpoint (`/keywords/serp`) reports the " +
+          "provider's own crawl time instead, which the provider can omit, and " +
+          "because a composed response with no leg reporting one has no honest " +
+          "answer. Absent on endpoints not yet threaded.",
       ),
     },
     {
-      optional: ["stale"],
+      optional: ["stale", "fetchedAt"],
       description:
         "What a DataForSEO-backed answer cost, attached to every such payload.",
     },
@@ -1449,6 +1495,14 @@ const SCHEMAS: Record<string, JsonSchema> = {
       "a grouped mode and comes back 0 under `as_is`.",
   ),
 
+  BacklinkSort: enumOf(
+    BACKLINK_SORTS,
+    "Row order for the backlinks list. `domain_score` is the default and is " +
+      "byte-identical to the order this endpoint used before the parameter " +
+      "existed — deliberately, because the sort is part of the request payload " +
+      "and therefore part of the cache key.",
+  ),
+
   BacklinkRow: obj({
     domainFrom: nullableStr("The linking domain."),
     urlFrom: nullableStr("The linking page."),
@@ -1783,6 +1837,110 @@ const SCHEMAS: Record<string, JsonSchema> = {
 
   CollectionDeletedResponse: obj({ deleted: literal(true), id: str() }),
 
+  /* -------------------------- history (history.ts) ------------------------ */
+
+  HistoryModule: enumOf(
+    HISTORY_MODULES,
+    "Which research module a trail row belongs to.",
+  ),
+
+  KeywordHistoryParams: obj({
+    keyword: str(),
+    location: int("DataForSEO location code."),
+    language: str(),
+  }),
+
+  DomainHistoryParams: obj({
+    target: str("Normalised hostname, as the module's URL state stores it."),
+    location: int(),
+    language: str(),
+  }),
+
+  GapHistoryParams: obj(
+    {
+      target: str(),
+      competitors: arrayOf(
+        str(),
+        "Normalised competitor hostnames, in column order.",
+      ),
+      location: int(),
+      language: str(),
+    },
+    {
+      description:
+        "The comparison's inputs. `mode` is **absent on purpose**: it selects a " +
+        "view over rows the query already covers, so switching modes is not a " +
+        "new search and does not create a second row.",
+    },
+  ),
+
+  KeywordHistorySummary: obj({
+    volume: nullableInt("Monthly search volume."),
+    difficulty: nullableNum("0–100."),
+    cpc: nullableNum(),
+    intent: nullableStr(),
+  }),
+
+  DomainHistorySummary: obj({
+    domainScore: nullableNum(
+      "0–100. Always null from this endpoint: Domain Score is a link-graph " +
+        "metric and the overview is a traffic query, so filling it in would " +
+        "mean buying a second call per trail row.",
+    ),
+    organicTraffic: nullableNum(),
+    organicKeywords: nullableInt(),
+  }),
+
+  GapHistorySummary: obj({
+    keywordCount: nullableInt("Rows the comparison found, before mode filtering."),
+    competitorCount: int(),
+  }),
+
+  HistoryEntry: obj(
+    {
+      id: str(),
+      module: ref("HistoryModule"),
+      params: {
+        description:
+          "Exactly what re-runs this search. The shape follows `module`: " +
+          "`KeywordHistoryParams`, `DomainHistoryParams` or `GapHistoryParams`.",
+        anyOf: [
+          ref("KeywordHistoryParams"),
+          ref("DomainHistoryParams"),
+          ref("GapHistoryParams"),
+        ],
+      },
+      summary: {
+        description:
+          "The headline metrics captured when the search last returned some — " +
+          "what makes the list scannable without re-running anything. Null " +
+          "until a search returns metrics; a later run that returns none does " +
+          "not erase one already captured. Shape follows `module`.",
+        anyOf: [
+          ref("KeywordHistorySummary"),
+          ref("DomainHistorySummary"),
+          ref("GapHistorySummary"),
+          { type: "null" },
+        ],
+      },
+      hitCount: int("Times this exact search has been run or reopened here."),
+      firstSearchedAt: str("ISO 8601."),
+      lastSearchedAt: str("ISO 8601."),
+    },
+    {
+      description:
+        "One remembered search. Re-running one updates this row rather than " +
+        "adding another, so the trail is what the workspace does, not a log.",
+    },
+  ),
+
+  HistoryListResponse: obj({
+    items: arrayOf(ref("HistoryEntry"), "Newest first."),
+    total: int("Rows stored for this module, which can exceed `items.length`."),
+  }),
+
+  HistoryDeletedResponse: obj({ deleted: int("Rows removed.") }),
+
   /* ------------------------ projects (projects.ts) ------------------------ */
 
   Device: enumOf(DEVICES),
@@ -1883,6 +2041,42 @@ const SCHEMAS: Record<string, JsonSchema> = {
     estimatedCostUsd: num("A hint, not a bill — see the operation description."),
     nextAllowedAt: str("ISO 8601 — when another check becomes allowed for this project."),
   }),
+
+  RankSummaryPoint: obj(
+    {
+      date: str("`YYYY-MM-DD`, UTC — the form `rank_snapshots.date` stores."),
+      avgPosition: nullableNum(
+        "Mean of the positions that ranked that day, to one decimal. **Null when " +
+          "none did** — zero would be the best position possible, invented from an " +
+          "absence.",
+      ),
+      top3: int("Keywords at position ≤ 3 that day."),
+      top10: int("Keywords at position ≤ 10 that day."),
+      top100: int("Keywords at position ≤ 100 that day."),
+      tracked: int(
+        "Keywords with any snapshot that day, ranked or not — the denominator " +
+          "the bands are read against.",
+      ),
+    },
+    {
+      description:
+        "One day of a project's rank snapshots. The bands nest: `top3` ⊆ `top10` " +
+        "⊆ `top100` ⊆ `tracked`, so a chart layers them rather than stacking them.",
+    },
+  ),
+
+  RankSummaryResponse: obj(
+    {
+      days: num("The window actually applied — `days` clamped to what the API allows."),
+      points: arrayOf(ref("RankSummaryPoint"), "Oldest first."),
+    },
+    {
+      description:
+        "Derived entirely from D1 — no provider call and no `ResultMeta`. Days " +
+        "with no check are missing rather than zero-filled: plot by `date`, never " +
+        "by index.",
+    },
+  ),
 
   /* -------------------------- audits (audits.ts) -------------------------- */
 
@@ -3080,6 +3274,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse("KeywordOverviewResponse", "The keyword's metrics."),
@@ -3099,6 +3294,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3120,6 +3316,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3144,6 +3341,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
         queryParam("depth", { type: "integer", minimum: 0 }, {
@@ -3170,6 +3368,7 @@ const PATHS: Record<string, PathItem> = {
           required: true,
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         queryParam("device", enumOf(["desktop", "mobile"]), {
           description: "Which device's results to read.",
         }),
@@ -3197,6 +3396,7 @@ const PATHS: Record<string, PathItem> = {
             "because a path turns this into a far narrower page-level query.",
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse("DomainOverviewResponse", "The domain's metrics."),
@@ -3219,6 +3419,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         isoDateParam("dateFrom", "Inclusive start, `yyyy-mm-dd`."),
         isoDateParam("dateTo", "Inclusive end, `yyyy-mm-dd`."),
       ],
@@ -3246,6 +3447,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
         queryParam("paid", { type: "boolean" }, {
@@ -3274,6 +3476,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
       ],
       responses: {
@@ -3296,6 +3499,7 @@ const PATHS: Record<string, PathItem> = {
         ...marketParams(),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
       ],
       responses: {
@@ -3330,6 +3534,7 @@ const PATHS: Record<string, PathItem> = {
         parameterRef("LanguageQuery"),
         queryParam("domain", { type: "string", minLength: 1 }, { required: true }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
       ],
       responses: {
         "200": jsonResponse(
@@ -3396,6 +3601,26 @@ const PATHS: Record<string, PathItem> = {
         }),
         queryParam("minDomainScore", { type: "number", minimum: 0, maximum: 100 }, {
           description: "Keep rows whose linking domain scores at least this.",
+        }),
+        queryParam(
+          "sort",
+          { $ref: "#/components/schemas/BacklinkSort", default: "domain_score" },
+          {
+            description:
+              "Row order, applied as the provider's `order_by` — so changing sort " +
+              "is a fresh (separately cached) query, not a reshuffle of one page. " +
+              "`newest`/`oldest` order by when the provider first saw the link.",
+          },
+        ),
+        queryParam("maxSpamScore", { type: "integer", minimum: 0, maximum: 100 }, {
+          description:
+            "Keep rows whose linking page scores at or below this on the provider's " +
+            `spam scale (0–100). The "Hide likely spam" toggle sends ${BACKLINKS_SPAM_HIDE_THRESHOLD}, which drops ` +
+            "the bulk-comment and link-farm tier while keeping ordinary directories " +
+            "and forums. **Note the scale**: unlike Domain Score's bound, this one " +
+            "is the provider's own 0–100 figure and is passed through unconverted. " +
+            "`0` is a real ceiling (only links with no spam signal at all), not " +
+            "the same as omitting the parameter.",
         }),
       ],
       responses: {
@@ -3588,6 +3813,7 @@ const PATHS: Record<string, PathItem> = {
           { description: "Filters rows already fetched. Free to change." },
         ),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3621,6 +3847,7 @@ const PATHS: Record<string, PathItem> = {
         }),
         queryParam("mode", { $ref: "#/components/schemas/GapMode", default: "missing" }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         queryParam(
           "limit",
           { type: "integer", minimum: 1, maximum: MAX_LIMIT },
@@ -3663,6 +3890,7 @@ const PATHS: Record<string, PathItem> = {
             "upstream default applies.",
         }),
         parameterRef("FreshQuery"),
+        parameterRef("StaleQuery"),
         ...pagingParams(),
         ...filterParams(),
       ],
@@ -3953,6 +4181,84 @@ const PATHS: Record<string, PathItem> = {
     },
   },
 
+  /* -------------------------------- history -------------------------------- */
+
+  "/history": {
+    get: {
+      operationId: "listSearchHistory",
+      summary: "The workspace's trail for one research module, newest first.",
+      description:
+        "Rows are written automatically by `GET /keywords/overview`, " +
+        "`GET /domains/overview` and `GET /gap/keywords` — there is no way to " +
+        "add one by hand, because the trail is a record of what was actually " +
+        "searched. Re-running a search updates its row (`hitCount`, " +
+        `\`lastSearchedAt\`) rather than adding another, and only the newest ${HISTORY_KEEP} ` +
+        "rows per module are kept.\n\n" +
+        "Re-opening a row is free: re-issue its `params` with `stale=true`, " +
+        "which serves the cached answer even past its normal lifetime and " +
+        "spends nothing. `fresh=true` is the opposite affordance, and the one " +
+        "that bills.\n\n" +
+        "Pure storage: no DataForSEO call, no cost, no `ResultMeta`.",
+      tags: ["History"],
+      parameters: [
+        parameterRef("WorkspaceQuery"),
+        queryParam("module", ref("HistoryModule"), {
+          required: true,
+          description: "Which module's trail to read. A trail is always one module's.",
+        }),
+        queryParam(
+          "limit",
+          {
+            type: "integer",
+            minimum: 1,
+            maximum: HISTORY_MAX_LIMIT,
+            default: HISTORY_DEFAULT_LIMIT,
+          },
+          {
+            description: `Rows to return, 1–${HISTORY_MAX_LIMIT}. Clamped rather than refused above the ceiling: a panel asking for more than we keep gets the most there is.`,
+          },
+        ),
+      ],
+      responses: {
+        "200": jsonResponse("HistoryListResponse", "The trail."),
+        ...errors("Unauthorized", "Forbidden", "ValidationFailed"),
+      },
+    },
+    delete: {
+      operationId: "clearSearchHistory",
+      summary: "Clear one module's trail.",
+      description:
+        "Clearing an empty trail succeeds with `deleted: 0` — the caller asked " +
+        "for it to be empty, and it is.",
+      tags: ["History"],
+      parameters: [
+        parameterRef("WorkspaceQuery"),
+        queryParam("module", ref("HistoryModule"), { required: true }),
+      ],
+      responses: {
+        "200": jsonResponse("HistoryDeletedResponse", "How many rows were removed."),
+        ...errors("Unauthorized", "Forbidden", "ValidationFailed"),
+      },
+    },
+  },
+
+  "/history/{id}": {
+    delete: {
+      operationId: "deleteSearchHistoryEntry",
+      summary: "Forget one search.",
+      description:
+        "No `module` parameter: the caller has a row id from a list it was " +
+        "already given. A row belonging to another workspace answers 404, which " +
+        "is the same answer a nonexistent id gets.",
+      tags: ["History"],
+      parameters: [pathParam("id", "History row id."), parameterRef("WorkspaceQuery")],
+      responses: {
+        "200": jsonResponse("HistoryDeletedResponse", "`{ deleted: 1 }`."),
+        ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed"),
+      },
+    },
+  },
+
   /* -------------------------------- projects ------------------------------- */
 
   "/projects": {
@@ -4141,6 +4447,48 @@ const PATHS: Record<string, PathItem> = {
         "202": jsonResponse("RankCheckEnqueuedResponse", "Queued."),
         "409": errorResponse("`conflict` — the project has no tracked keywords to check."),
         ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed", "RateLimited"),
+      },
+    },
+  },
+
+  "/projects/{id}/rank/summary": {
+    get: {
+      operationId: "getRankSummary",
+      summary: "Daily rollup of a project's rank snapshots, for the overview chart.",
+      description:
+        "One grouped query over `rank_snapshots`, oldest first. **Free**: pure D1, " +
+        "no provider call, no `ResultMeta`, nothing that can trip the spend cap — " +
+        "so the chart can render on every visit.\n\n" +
+        "**Days with no check are absent, not zero.** A project first checked on a " +
+        "Tuesday has no Monday row, and a project nobody has checked for a month " +
+        "has a month-shaped gap. Plot by `date`, never by index — a chart that " +
+        "zero-fills draws a cliff to no tracked keywords that never happened.\n\n" +
+        "`avgPosition` averages **only the keywords that ranked that day**, and is " +
+        "null when none did; zero would be the best position possible, invented " +
+        "from an absence. `tracked` counts every snapshot taken that day, ranked or " +
+        "not, and is the denominator the bands are read against. The bands nest: " +
+        "`top3` ⊆ `top10` ⊆ `top100` ⊆ `tracked`.\n\n" +
+        "The window is a cutoff counted back from today (UTC), inclusive — " +
+        `\`days=7\` covers today and the six days before it — clamped to ${RANK_SUMMARY_MIN_DAYS}–${RANK_SUMMARY_MAX_DAYS} ` +
+        "rather than refused, and echoed back as `days`.",
+      tags: ["Rank Tracking"],
+      parameters: projectScoped(
+        queryParam(
+          "days",
+          {
+            type: "integer",
+            minimum: RANK_SUMMARY_MIN_DAYS,
+            maximum: RANK_SUMMARY_MAX_DAYS,
+            default: RANK_SUMMARY_DEFAULT_DAYS,
+          },
+          {
+            description: `Length of the window in days, clamped to ${RANK_SUMMARY_MIN_DAYS}–${RANK_SUMMARY_MAX_DAYS}.`,
+          },
+        ),
+      ),
+      responses: {
+        "200": jsonResponse("RankSummaryResponse", "The daily rollup, oldest first."),
+        ...errors("Unauthorized", "Forbidden", "NotFound", "ValidationFailed"),
       },
     },
   },

@@ -180,6 +180,23 @@ export interface DataForSeoRequest<TPayload = unknown> {
   /** Bypass a cache hit but still write the fresh response back. */
   fresh?: boolean;
   /**
+   * Serve a **soft-expired** entry outright rather than refreshing it: a cache
+   * hit past its TTL, `stale: true`, $0, and no network call at all.
+   *
+   * This is what makes reopening a past search free. The search-history trail
+   * stores the params of a query someone already paid for, and a click on one
+   * of those rows is a request to see that answer again — not to buy a newer
+   * one. `fresh` is the opposite affordance and the two are mutually exclusive
+   * (see the guard in `request`).
+   *
+   * It is a *permission*, not a demand: with no usable entry — never cached, or
+   * older than `CACHE_MAX_AGE_MS` and therefore deleted on read — the request
+   * falls through to the normal billed fetch. A search reopened more than 90
+   * days later costs what a new search costs, because by then there is nothing
+   * left to reopen.
+   */
+  allowStale?: boolean;
+  /**
    * DataForSEO's task endpoints are POST; the appendix/list endpoints are GET
    * with no body. Defaults to POST — the overwhelming majority.
    */
@@ -279,14 +296,24 @@ export interface DataForSeoResponse<TResult = unknown> {
   costUsd: number;
   cached: boolean;
   /**
-   * True only for a **soft-expired entry served because the refresh timed
-   * out** — the stale-if-error path. `cached` is true alongside it; the pair
-   * reads as "from cache, and older than we would normally serve".
+   * True for a **soft-expired entry served instead of a fresh one**. Two paths
+   * set it: the refresh timed out (stale-if-error), or the caller asked for the
+   * old copy outright with `allowStale`. `cached` is true alongside it; the
+   * pair reads as "from cache, and older than we would normally serve".
    *
    * False for every ordinary cache hit, so a UI chip can say "cached · may be
    * outdated" exactly when that is true and not one request sooner.
    */
   stale: boolean;
+  /**
+   * When the payload behind this response actually came off the wire, epoch ms.
+   *
+   * On a cache hit — fresh-window, `allowStale`, or stale-if-error alike — this
+   * is the entry's `cachedAt`, **not** the time of this request. That is the
+   * whole point: it is what lets a UI say "updated 3 days ago" honestly next to
+   * a Refresh button, rather than claiming freshness it does not have.
+   */
+  fetchedAt: number;
   /** DataForSEO's own status for the first task, kept for diagnostics. */
   statusCode: number;
   statusMessage: string;
@@ -507,6 +534,25 @@ export function readCacheEntry<TResult>(
     return { ...base, softExpiresAt: soft };
   }
   return null;
+}
+
+/**
+ * When the payload in a cache entry was really fetched, for `fetchedAt`.
+ *
+ * `cachedAt` has been written by every entry version there has ever been, and
+ * `readCacheEntry` already refuses an entry without a finite one — so the
+ * fallback here is unreachable by design. It exists anyway because the cost of
+ * the two answers is wildly asymmetric: a wrong `fetchedAt` is one misleading
+ * "updated N days ago" chip, while `NaN`/`undefined` reaching `new Date(...)`
+ * is an "Invalid Date" crash in a response mapper. The read time is the most
+ * conservative stand-in — it claims the data is as new as this request, which
+ * is the same claim an uncached answer makes.
+ */
+function cacheFetchedAt(
+  entry: { cachedAt: number },
+  readAt: number,
+): number {
+  return Number.isFinite(entry.cachedAt) ? entry.cachedAt : readAt;
 }
 
 /** `appendix/user_data` — only the field we actually consume. */
@@ -743,6 +789,7 @@ export function createDataForSeoClient(
         payload,
         ttl,
         fresh = false,
+        allowStale = false,
         method = "POST",
         cacheScope = "workspace",
         okTaskStatusCodes = [],
@@ -757,8 +804,24 @@ export function createDataForSeoClient(
       const cacheable = ttl !== "none";
       const global = cacheScope === "global";
 
-      // 0. The exception is checked before anything else touches a key, so an
-      //    endpoint off the allowlist cannot read or write a shared entry.
+      /*
+       * 0a. `fresh` and `allowStale` are opposite instructions — "buy me a new
+       *     answer" and "hand me the old one, spend nothing" — so asking for
+       *     both is not a preference to resolve but a bug to report. The routes
+       *     reject the pair with a 422 before it gets this far (see
+       *     `assertFreshness` in lib/research.ts); reaching here means a
+       *     wrapper built the request itself and got it wrong, which is an
+       *     `internal_error` in the same sense as a mis-scoped cache key.
+       */
+      if (fresh && allowStale) {
+        throw new ApiException(
+          "internal_error",
+          `Contradictory cache instructions for ${endpoint}: 'fresh' buys a new answer and 'allowStale' refuses to spend. Pass at most one.`,
+        );
+      }
+
+      // 0b. The exception is checked before anything else touches a key, so an
+      //     endpoint off the allowlist cannot read or write a shared entry.
       if (global) assertGlobalCacheAllowed(endpoint);
 
       // 1. Key from workspace + endpoint + canonical payload hash — or, for an
@@ -770,12 +833,17 @@ export function createDataForSeoClient(
       /*
        * 2. A hit costs nothing and skips the cap entirely.
        *
-       * Three outcomes, not two, because entries outlive their TTL now:
-       *   within the soft TTL  → serve it, done;
-       *   past the soft TTL    → keep it as `stale` and refresh below, so a
-       *                          refresh that times out still has something to
-       *                          answer with;
-       *   past CACHE_MAX_AGE_MS → delete it and treat the read as a miss.
+       * Four outcomes, because entries outlive their TTL and a caller may ask
+       * for an outlived one on purpose:
+       *   within the soft TTL   → serve it, done;
+       *   past the soft TTL,
+       *     allowStale          → serve it anyway, flagged stale, no network;
+       *     otherwise           → keep it as `stale` and refresh below, so a
+       *                           refresh that times out still has something to
+       *                           answer with;
+       *   past CACHE_MAX_AGE_MS → delete it and treat the read as a miss, even
+       *                           under allowStale: there is nothing left to
+       *                           reopen, so the caller buys a new answer.
        *
        * `fresh` skips this block entirely, which is what makes a Refresh
        * button honest: a fresh request that fails must fail, never quietly
@@ -787,12 +855,13 @@ export function createDataForSeoClient(
         const hit = await env.CACHE.get<unknown>(cacheKey, "json");
         const entry = readCacheEntry<TResult>(hit);
         if (entry !== null) {
+          const servedFetchedAt = cacheFetchedAt(entry, readAt);
           if (readAt - entry.cachedAt > CACHE_MAX_AGE_MS) {
             // Best-effort: entries carry no expirationTtl, so this read is the
             // only thing that will ever remove it — but failing to tidy up is
             // not a reason to fail the request.
             await env.CACHE.delete(cacheKey).catch(() => undefined);
-          } else if (readAt < entry.softExpiresAt) {
+          } else if (readAt < entry.softExpiresAt || allowStale) {
             await meter(meteredEndpoint, 0, true);
             return {
               results: entry.results,
@@ -800,7 +869,8 @@ export function createDataForSeoClient(
               tasks: [],
               costUsd: 0,
               cached: true,
-              stale: false,
+              stale: readAt >= entry.softExpiresAt,
+              fetchedAt: servedFetchedAt,
               statusCode: entry.statusCode,
               statusMessage: entry.statusMessage,
             };
@@ -852,6 +922,7 @@ export function createDataForSeoClient(
             costUsd: 0,
             cached: true,
             stale: true,
+            fetchedAt: cacheFetchedAt(stale, readAt),
             statusCode: stale.statusCode,
             statusMessage: stale.statusMessage,
           };
@@ -867,6 +938,11 @@ export function createDataForSeoClient(
       await meter(meteredEndpoint, costUsd, false);
 
       assertOk(endpoint, envelope, okTaskStatusCodes);
+
+      // The moment this answer became true. One reading, used for both the
+      // response and the entry written below, so a later cache hit reports the
+      // identical `fetchedAt` rather than one a few milliseconds apart.
+      const fetchedAt = Date.now();
 
       const results = flatten<TResult>(envelope);
       const tasks = toTasks(envelope);
@@ -884,14 +960,13 @@ export function createDataForSeoClient(
        * bounds the stored lifetime in its place.
        */
       if (cacheable) {
-        const writtenAt = Date.now();
         const entry: CacheEntryV2<TResult> = {
           v: CACHE_ENTRY_VERSION,
           results,
           statusCode,
           statusMessage,
-          cachedAt: writtenAt,
-          softExpiresAt: writtenAt + CACHE_TTL_SECONDS[ttl] * 1000,
+          cachedAt: fetchedAt,
+          softExpiresAt: fetchedAt + CACHE_TTL_SECONDS[ttl] * 1000,
         };
         await env.CACHE.put(cacheKey, JSON.stringify(entry));
       }
@@ -902,6 +977,7 @@ export function createDataForSeoClient(
         costUsd,
         cached: false,
         stale: false,
+        fetchedAt,
         statusCode,
         statusMessage,
       };

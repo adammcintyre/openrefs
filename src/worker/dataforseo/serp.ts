@@ -50,6 +50,7 @@ const paramsSchema = z.object({
   device: z.enum(SERP_DEVICES).optional(),
   /** Bypass a cache hit and pay for a fresh SERP. The "Refresh" button. */
   fresh: z.boolean().optional(),
+  allowStale: z.boolean().optional(),
 });
 
 export type OrganicSerpParams = z.input<typeof paramsSchema>;
@@ -301,7 +302,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
           z.flattenError(parsed.error),
         );
       }
-      const { keyword, locationCode, languageCode, depth, device, fresh } =
+      const { keyword, locationCode, languageCode, depth, device, fresh, allowStale } =
         parsed.data;
 
       const response = await client.request<unknown>({
@@ -319,6 +320,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         // at 24h, and `fresh` is how the Refresh button pays to skip that.
         ttl: "live",
         fresh,
+        allowStale,
       });
 
       return toOrganicSerpResult(
@@ -328,6 +330,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
           costUsd: response.costUsd,
           cached: response.cached,
           stale: response.stale,
+          fetchedAtMs: response.fetchedAt,
         },
       );
     },
@@ -405,6 +408,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -437,6 +441,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
         costUsd: response.costUsd,
         cached: response.cached,
         stale: response.stale,
+        fetchedAtMs: response.fetchedAt,
       };
     },
 
@@ -487,6 +492,7 @@ export function createSerpApi(client: DataForSeoClient): SerpApi {
           costUsd: response.costUsd,
           cached: response.cached,
           stale: response.stale,
+          fetchedAtMs: response.fetchedAt,
         }),
       };
     },
@@ -541,6 +547,7 @@ function toOrganicSerpResult(
     costUsd: meta.costUsd,
     cached: meta.cached,
     stale: meta.stale,
+    fetchedAtMs: meta.fetchedAtMs,
   };
 }
 
