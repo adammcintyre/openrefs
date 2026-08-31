@@ -20,3 +20,14 @@ Owned by the orchestrator; phase agents pick these up when a spec says so. Add h
 - **Queue-back the audit task_post** — POST /audits currently calls DataForSEO inline, so a tarpit window fails the user's click; instead insert the audit row as pending and let a job post the crawl with the queue's own retry/backoff. Same pattern wherever a user click triggers a task_post. Target: Phase 7 worker wave.
 - **Project deletion strands audit R2 blobs** — extend deleteProjectEverywhere to purge ws:<ws>/audits/<auditId>/ prefixes for the project's audits (single-audit delete already does it). Target: Phase 7 worker wave.
 - **KV cache sweep cron** — stale-if-error entries have no expirationTtl; the 90-day delete only fires on read. Add a low-frequency cron sweep if hosted KV growth matters. Target: Phase 8 hardening.
+
+- **Consolidate the duplicated history UI:** 9b built keyword-specific
+  history UI in `src/app/components/keywords/history-panel.tsx`; 9c built
+  shared pieces in `src/app/components/history/` (`search-history-panel.tsx`,
+  `freshness.tsx`, `relative-time.ts`). One StaleChip also exists twice
+  (content module + keywords). Fold 9b's panel onto the shared pieces.
+- **Domain history Domain Score is always "—":** `/domains/overview` is a
+  Labs traffic query and carries no Domain Score, so the trail summary stores
+  null (a second billed call per search was not worth it). Cheap enrichment:
+  when a backlinks summary for the same target is already in KV, backfill the
+  score into the trail row at record time.
