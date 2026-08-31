@@ -116,6 +116,14 @@ export const BACKLINKS_FIELDS = {
   domainFromRank: "domain_from_rank",
   pageFromTitle: "page_from_title",
   tldFrom: "tld_from",
+  /**
+   * The provider's spam estimate for the linking page, **0–100 already** —
+   * singular `backlink_`, unlike the plural `backlinks_spam_score` on
+   * referring_domains and summary. It is the one authority-ish number here
+   * that is not on their 0–1000 rank scale, so a filter on it takes the user's
+   * number unconverted; `fromScore` here would be a bug.
+   */
+  spamScore: "backlink_spam_score",
 } as const;
 
 /** Filterable/sortable paths shared by referring_domains and anchors. */

@@ -70,6 +70,8 @@ import {
   AUDIT_STATUSES,
 } from "../shared/audits";
 import {
+  BACKLINK_SORTS,
+  BACKLINKS_SPAM_HIDE_THRESHOLD,
   BACKLINKS_HISTORY_MIN_DATE,
   BACKLINKS_LIST_MODES,
   BACKLINKS_SCORES_MAX_TARGETS,
@@ -1491,6 +1493,14 @@ const SCHEMAS: Record<string, JsonSchema> = {
     "`one_per_domain` answers \"which domains link to me\" with one example link " +
       "each; `as_is` is every individual link. `groupCount` is only meaningful in " +
       "a grouped mode and comes back 0 under `as_is`.",
+  ),
+
+  BacklinkSort: enumOf(
+    BACKLINK_SORTS,
+    "Row order for the backlinks list. `domain_score` is the default and is " +
+      "byte-identical to the order this endpoint used before the parameter " +
+      "existed — deliberately, because the sort is part of the request payload " +
+      "and therefore part of the cache key.",
   ),
 
   BacklinkRow: obj({
@@ -3591,6 +3601,26 @@ const PATHS: Record<string, PathItem> = {
         }),
         queryParam("minDomainScore", { type: "number", minimum: 0, maximum: 100 }, {
           description: "Keep rows whose linking domain scores at least this.",
+        }),
+        queryParam(
+          "sort",
+          { $ref: "#/components/schemas/BacklinkSort", default: "domain_score" },
+          {
+            description:
+              "Row order, applied as the provider's `order_by` — so changing sort " +
+              "is a fresh (separately cached) query, not a reshuffle of one page. " +
+              "`newest`/`oldest` order by when the provider first saw the link.",
+          },
+        ),
+        queryParam("maxSpamScore", { type: "integer", minimum: 0, maximum: 100 }, {
+          description:
+            "Keep rows whose linking page scores at or below this on the provider's " +
+            `spam scale (0–100). The "Hide likely spam" toggle sends ${BACKLINKS_SPAM_HIDE_THRESHOLD}, which drops ` +
+            "the bulk-comment and link-farm tier while keeping ordinary directories " +
+            "and forums. **Note the scale**: unlike Domain Score's bound, this one " +
+            "is the provider's own 0–100 figure and is passed through unconverted. " +
+            "`0` is a real ceiling (only links with no spam signal at all), not " +
+            "the same as omitting the parameter.",
         }),
       ],
       responses: {

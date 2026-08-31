@@ -25,6 +25,7 @@ import { z } from "zod";
 
 import type {
   AnchorsResponse,
+  BacklinkSort,
   BacklinksHistoryResponse,
   BacklinksListMode,
   BacklinksListResponse,
@@ -32,6 +33,7 @@ import type {
   ReferringDomainsResponse,
 } from "../../shared/backlinks";
 import {
+  BACKLINK_SORTS,
   BACKLINKS_HISTORY_MIN_DATE,
   BACKLINKS_LIST_MODES,
   BACKLINKS_SCORES_MAX_TARGETS,
@@ -99,6 +101,17 @@ const listQuerySchema = targetQuerySchema
     anchor: z.string().trim().min(1).optional(),
     /** 0–100 Domain Score floor for the LINKING domain. */
     minDomainScore: z.coerce.number().min(0).max(100).optional(),
+    /**
+     * Which order the provider returns links in. Applied upstream as
+     * `order_by`, so changing sort is a fresh (separately cached) query rather
+     * than a client-side reshuffle of one page.
+     */
+    sort: z.enum(BACKLINK_SORTS).optional().default("domain_score"),
+    /**
+     * 0–100 provider spam-score ceiling. The "Hide likely spam" toggle sends
+     * `BACKLINKS_SPAM_HIDE_THRESHOLD`; any value is accepted.
+     */
+    maxSpamScore: z.coerce.number().int().min(0).max(100).optional(),
   });
 
 const referringQuerySchema = targetQuerySchema
@@ -132,10 +145,30 @@ const scoresBodySchema = z.object({
   fresh: z.boolean().optional(),
 });
 
+/**
+ * The four sort orders `?sort=` selects, as the provider's `order_by`.
+ *
+ * `domain_score` is the default **and is byte-identical to what this route sent
+ * before the parameter existed** — one rule, `domain_from_rank,desc`. That is
+ * not a stylistic choice: the sort is part of the request payload, and the
+ * payload is the cache key. A "better" default (say, a `rank,desc` tiebreak
+ * after it) would fork every existing KV entry for every workspace, and every
+ * user's next backlinks page would be re-bought to produce a near-identical
+ * answer. So the default stays exactly as it was, and the new orders are
+ * strictly additions.
+ *
+ * `newest`/`oldest` sort on `first_seen`, which is when the provider first
+ * saw the link — the closest thing their index has to "when was this link
+ * built".
+ */
+const BACKLINK_SORT_ORDERS: Record<BacklinkSort, LabsSort[]> = {
+  domain_score: [{ field: BACKLINKS_FIELDS.domainFromRank, direction: "desc" }],
+  page_score: [{ field: BACKLINKS_FIELDS.pageFromRank, direction: "desc" }],
+  newest: [{ field: BACKLINKS_FIELDS.firstSeen, direction: "desc" }],
+  oldest: [{ field: BACKLINKS_FIELDS.firstSeen, direction: "asc" }],
+};
+
 /** Sort orders. The provider documents no default, so we always send one. */
-const BACKLINKS_BY_RANK: LabsSort[] = [
-  { field: BACKLINKS_FIELDS.domainFromRank, direction: "desc" },
-];
 const REFERRING_BY_RANK: LabsSort[] = [
   { field: REFERRING_FIELDS.rank, direction: "desc" },
 ];
@@ -188,6 +221,16 @@ backlinks.get("/list", async (c) => {
       value: fromScore(query.minDomainScore),
     });
   }
+  if (query.maxSpamScore !== undefined) {
+    // Already 0–100 on the wire — spam score is the one authority-ish number
+    // the provider does not report on its 0–1000 scale, so no conversion.
+    // ANDed with whatever is above it by `toFilterExpression`.
+    filters.push({
+      field: BACKLINKS_FIELDS.spamScore,
+      operator: "<=",
+      value: query.maxSpamScore,
+    });
+  }
 
   const result = await dfs.backlinks.backlinksLive({
     target: query.target,
@@ -195,7 +238,7 @@ backlinks.get("/list", async (c) => {
     limit: query.limit,
     offset: query.offset,
     filters,
-    sorts: BACKLINKS_BY_RANK,
+    sorts: BACKLINK_SORT_ORDERS[query.sort],
     fresh: query.fresh,
   });
 
