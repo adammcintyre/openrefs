@@ -918,17 +918,20 @@ export function createOnPageApi(client: DataForSeoClient): OnPageApi {
             // Singular, and one task per POST — the endpoint has no array form.
             url: params.url,
             /*
-             * Set explicitly because their docs name it as the fix for the
-             * `"type": "broken"` failure mode: "if you do not specify this
-             * parameter, some websites may deny access". Free, and it turns a
-             * refusal into a word count.
-             */
-            accept_language: "en-US,en;q=0.9",
-            /*
-             * Both left off, and both are money: enable_javascript is 10× the
-             * per-page price and enable_browser_rendering is 34×. A word count
-             * off the server-rendered HTML is worth its $0.00015 and is not
-             * worth $0.0051.
+             * `url` and NOTHING ELSE. Verified live 2026-08-31: sending
+             * `accept_language` — which the on_page docs list, and which they
+             * name as the fix for the `"type": "broken"` refusal mode — is
+             * rejected by THIS endpoint with 40501 "Invalid Field:
+             * 'accept_language'". The parameter tables on the on_page family
+             * pages are not uniformly applicable to content_parsing/live, so
+             * anything added here must be proven against the live endpoint
+             * rather than read off a sibling's docs.
+             *
+             * Two that are deliberately absent for a different reason —
+             * money: enable_javascript is 10× the per-page price and
+             * enable_browser_rendering is 34×. A word count off the
+             * server-rendered HTML is worth its $0.00015 and is not worth
+             * $0.0051.
              */
           },
         ],

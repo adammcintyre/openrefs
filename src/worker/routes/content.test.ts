@@ -67,6 +67,34 @@ describe("normalizeContentUrl", () => {
     );
   });
 
+  it("strips the click-tracking parameters Google appends to results", () => {
+    // Observed live: photoboothtemplates.com arrived twice under two srsltid
+    // values and took two of seven low-authority slots in one table.
+    expect(
+      normalizeContentUrl("https://example.com/x?srsltid=AfmBOopABC"),
+    ).toBe(normalizeContentUrl("https://example.com/x?srsltid=AfmBOopXYZ"));
+    expect(normalizeContentUrl("https://example.com/x?gclid=abc")).toBe(
+      "https://example.com/x",
+    );
+    expect(
+      normalizeContentUrl("https://example.com/x?utm_source=a&utm_medium=b"),
+    ).toBe("https://example.com/x");
+  });
+
+  it("leaves no bare ? behind when the query was all tracking", () => {
+    // Otherwise "…/x?" and "…/x" survive as two spellings of one page, which
+    // is the bug this normaliser exists to prevent.
+    expect(normalizeContentUrl("https://example.com/x?fbclid=1")).toBe(
+      normalizeContentUrl("https://example.com/x"),
+    );
+  });
+
+  it("keeps a real parameter alongside a stripped one", () => {
+    expect(normalizeContentUrl("https://example.com/x?p=12&gclid=abc")).toBe(
+      "https://example.com/x?p=12",
+    );
+  });
+
   it("keeps path case, because servers may distinguish it", () => {
     expect(normalizeContentUrl("https://example.com/About")).not.toBe(
       normalizeContentUrl("https://example.com/about"),

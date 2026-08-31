@@ -78,13 +78,30 @@ const content = new Hono<AppEnv>();
 content.use("*", requireSession);
 
 /**
- * How many keyword ideas to ask for when expanding.
+ * Expansion keywords come from **keyword_suggestions, not keyword_ideas**, and
+ * the difference decides whether this feature works.
  *
- * Asks for exactly `expand` and takes them in the order DataForSEO returns
- * under a volume sort, so the expansion is "the N biggest related searches"
- * rather than a sample of a larger list we paid to fetch and threw away.
+ * `keyword_ideas` returns Google's own ad-group neighbours — semantically
+ * adjacent, often not about the topic at all. Measured live on "photo booth
+ * template" (UK, 2026-08-31) it returned "photo frames", "photo me" and
+ * "gogul photo"; their SERPs are pages about picture frames, and every one of
+ * those pages lands in a table claiming to show photo-booth-template
+ * competitors.
+ *
+ * `keyword_suggestions` phrase-matches the seed, so the same query returned
+ * "photo booth strips template", "photo booth frame template" and "photo booth
+ * template free". Every expansion SERP is then genuinely about the topic,
+ * which is the entire premise of deduplicating pages across them.
+ *
+ * The two cost the same ($0.0126 vs $0.01296 observed). docs/specs/PHASE7.md
+ * says "keyword ideas"; this is a deliberate departure from that wording, and
+ * the evidence for it is above.
+ *
+ * Asked for in volume order and taken in that order, so the expansion is "the
+ * N biggest related searches" rather than a sample of a larger list we paid to
+ * fetch and threw away.
  */
-const IDEAS_SORT = [
+const EXPANSION_SORT = [
   { field: "keyword_info.search_volume", direction: "desc" as const },
 ];
 
@@ -168,6 +185,20 @@ interface ComposedDiscovery {
 const COMPOSED_VERSION = 1;
 
 /**
+ * Bumped whenever `compose` changes what a row *means* — a different expansion
+ * source, a new enrichment, a changed join.
+ *
+ * It goes into the cache key rather than being compared after the read,
+ * because the entries are keyed by what was bought and a composition built by
+ * older code is not the same answer even though the query is identical.
+ * Without this, changing the expansion from keyword_ideas to
+ * keyword_suggestions left every existing key serving the old pages for a
+ * further 24 hours. Cheaper than a KV sweep and impossible to forget: the old
+ * key is simply never read again.
+ */
+const COMPOSITION_REVISION = 3;
+
+/**
  * `ws:<id>:content:discover:<sha256>`.
  *
  * Under the workspace prefix, so workspace deletion's `ws:<id>:` sweep takes
@@ -189,6 +220,7 @@ async function composedCacheKey(
       language: query.language,
       expand: query.expand,
       depth: SERP_DEFAULT_DEPTH,
+      rev: COMPOSITION_REVISION,
     }),
   );
   return `ws:${workspaceId}:content:discover:${hash}`;
@@ -239,7 +271,8 @@ export function mergeSerpPages(
       if (page === undefined) {
         page = {
           url,
-          domain: item.domain ?? hostOf(url),
+          domain:
+            item.domain === null ? hostOf(url) : normalizeSerpDomain(item.domain),
           title: item.title,
           keywords: [],
         };
@@ -277,10 +310,26 @@ export function batch<T>(items: readonly T[], size: number): T[][] {
 /** The bare host of a URL, or "" when it will not parse. */
 function hostOf(url: string): string {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    return normalizeSerpDomain(new URL(url).hostname);
   } catch {
     return "";
   }
+}
+
+/**
+ * A SERP's `domain` in the form `bulk_ranks` echoes back — lowercased, without
+ * `www.`.
+ *
+ * This is a join key, not cosmetics. `normalizeBacklinksTarget` strips `www.`
+ * from a bare host before sending it, and the response echoes the *normalised*
+ * target, so looking the score up under the SERP's own "www.example.com" finds
+ * nothing. Measured live (2026-08-31): every one of 29 `www.` rows came back
+ * with a null Domain Score while all 21 non-`www.` rows resolved — a silently
+ * empty column for more than half the table, and one that would have read as
+ * "DataForSEO has never crawled these sites".
+ */
+export function normalizeSerpDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
 }
 
 /**
@@ -308,7 +357,7 @@ async function compose(
   const costs: ContentDiscoverCosts = {
     serpUsd: 0,
     serpCalls: 0,
-    ideasUsd: 0,
+    expansionUsd: 0,
     scoresUsd: 0,
     trafficUsd: 0,
     totalUsd: 0,
@@ -325,22 +374,27 @@ async function compose(
   ];
 
   if (query.expand > 0) {
-    const ideas = await dfs.labs.googleKeywordIdeasLive({
+    const suggestions = await dfs.labs.googleKeywordSuggestionsLive({
       keyword: topic,
       locationCode: query.location,
       languageCode: query.language,
-      limit: query.expand,
+      // One extra: suggestions returns the seed itself as a row, and it is
+      // skipped below — without the headroom an expand=5 would yield four.
+      limit: query.expand + 1,
       filters: [
         { field: "keyword_info.search_volume", operator: ">", value: MIN_EXPANSION_VOLUME },
       ],
-      sorts: IDEAS_SORT,
+      sorts: EXPANSION_SORT,
       fresh: query.fresh,
     });
-    costs.ideasUsd += ideas.costUsd;
+    costs.expansionUsd += suggestions.costUsd;
 
-    for (const idea of ideas.items) {
-      if (idea.keyword === topic) continue;
-      seeds.push({ keyword: idea.keyword, volume: idea.metrics.searchVolume });
+    for (const suggestion of suggestions.items) {
+      if (suggestion.keyword === topic) continue;
+      seeds.push({
+        keyword: suggestion.keyword,
+        volume: suggestion.metrics.searchVolume,
+      });
       if (seeds.length > query.expand) break;
     }
   }
@@ -445,7 +499,7 @@ async function compose(
   });
 
   costs.totalUsd =
-    costs.serpUsd + costs.ideasUsd + costs.scoresUsd + costs.trafficUsd;
+    costs.serpUsd + costs.expansionUsd + costs.scoresUsd + costs.trafficUsd;
 
   return {
     v: COMPOSED_VERSION,

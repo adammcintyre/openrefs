@@ -166,8 +166,12 @@ describe("contentParsingLive", () => {
     // either.
     expect(payload[0]?.["enable_javascript"]).toBeUndefined();
     expect(payload[0]?.["enable_browser_rendering"]).toBeUndefined();
-    // Their documented fix for the "broken" failure mode, and it is free.
-    expect(payload[0]?.["accept_language"]).toBeDefined();
+    /*
+     * `url` and nothing else. This endpoint rejects `accept_language` with
+     * 40501 "Invalid Field" even though the on_page docs list it — verified
+     * live 2026-08-31. Pinned so nobody re-adds it from a sibling's docs.
+     */
+    expect(Object.keys(payload[0] ?? {})).toEqual(["url"]);
   });
 
   it("reports the URL it was asked about, so a fan-out can align by it", async () => {

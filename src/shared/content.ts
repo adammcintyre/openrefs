@@ -7,10 +7,10 @@
  * its authority and traffic beside the keywords it was found on.
  *
  * Nothing here is a new DataForSEO family. A row is composed from four
- * existing sources (a SERP, optionally more SERPs from keyword ideas, bulk
- * ranks, bulk traffic estimation), which is why `ContentDiscoverCosts` exists:
- * a composed answer has no single price, and a UI that shows one number should
- * be able to explain it.
+ * existing sources (a SERP, optionally more SERPs from keyword suggestions,
+ * bulk ranks, bulk traffic estimation), which is why `ContentDiscoverCosts`
+ * exists: a composed answer has no single price, and a UI that shows one
+ * number should be able to explain it.
  */
 import type { ResultMeta } from "./api";
 
@@ -101,8 +101,8 @@ export interface ContentDiscoverCosts {
   serpUsd: number;
   /** How many SERPs that was. */
   serpCalls: number;
-  /** The keyword-ideas lookup that produced the expansion keywords. */
-  ideasUsd: number;
+  /** The keyword-suggestions lookup that produced the expansion keywords. */
+  expansionUsd: number;
   /** `backlinks/bulk_ranks` — Domain and Page Scores. */
   scoresUsd: number;
   /** `dataforseo_labs/bulk_traffic_estimation` — the traffic column. */
@@ -177,6 +177,37 @@ export interface ContentWordCountResponse extends ResultMeta {
 }
 
 /**
+ * Query parameters that identify a *click*, not a page.
+ *
+ * Google appends `srsltid` to organic result URLs and gives a different value
+ * per impression, so without stripping it the same article arrives as two rows
+ * for two keywords — observed live on photoboothtemplates.com (2026-08-31),
+ * where one page occupied two of the seven surviving low-authority slots.
+ *
+ * Deliberately an allowlist of known-inert names rather than "drop everything
+ * with an `=`": plenty of real sites still identify pages by query string, and
+ * collapsing `?p=12` into `?p=13` would merge two different articles into one
+ * row — a worse error than showing one page twice.
+ */
+const TRACKING_PARAMS = [
+  "srsltid",
+  "gclid",
+  "gbraid",
+  "wbraid",
+  "fbclid",
+  "msclkid",
+  "mc_cid",
+  "mc_eid",
+  "igshid",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "utm_id",
+];
+
+/**
  * The deduplication key: one string per page, so the same page reached from
  * three SERPs is one row.
  *
@@ -186,12 +217,14 @@ export interface ContentWordCountResponse extends ResultMeta {
  *  - **fragment dropped** — `#section` is a position within one page, never a
  *    different page;
  *  - **trailing slash dropped**, except on a bare root, where `/` is the path;
- *  - **query kept** — `?p=12` really can be a different article.
+ *  - **query kept**, except tracking parameters — `?p=12` really can be a
+ *    different article, but `?srsltid=...` never is. See `TRACKING_PARAMS`.
  *
  * `www.` is deliberately NOT stripped: it is part of the host a SERP reported
- * and the URL we would open. Returns the input trimmed when it will not parse,
- * so an unparseable URL is still its own row rather than colliding with every
- * other unparseable one.
+ * and the URL we would open. (The *domain* column is stripped separately, by
+ * `normalizeSerpDomain`, because that one is a join key against bulk_ranks.)
+ * Returns the input trimmed when it will not parse, so an unparseable URL is
+ * still its own row rather than colliding with every other unparseable one.
  */
 export function normalizeContentUrl(url: string): string {
   const trimmed = url.trim();
@@ -202,6 +235,10 @@ export function normalizeContentUrl(url: string): string {
     return trimmed;
   }
   parsed.hash = "";
+  for (const param of TRACKING_PARAMS) parsed.searchParams.delete(param);
+  // An emptied query must leave no bare "?" behind, or two spellings of one
+  // page survive the normaliser after all.
+  if ([...parsed.searchParams].length === 0) parsed.search = "";
   if (parsed.pathname.length > 1 && parsed.pathname.endsWith("/")) {
     parsed.pathname = parsed.pathname.replace(/\/+$/, "");
   }
