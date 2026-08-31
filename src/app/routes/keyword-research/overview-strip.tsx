@@ -8,14 +8,21 @@
  * spending from their own DataForSEO account and deserves to see the price of
  * a search before they run fifty of them.
  */
+import { RefreshCw } from "lucide-react";
+
 import {
   ApiErrorNotice,
   useApiErrorToast,
 } from "../../components/keywords/api-error-notice";
-import { CostChip } from "../../components/keywords/chips";
+import {
+  CostChip,
+  StaleChip,
+  UpdatedChip,
+} from "../../components/keywords/chips";
 import {
   EM_DASH,
   difficultyBand,
+  formatCost,
   formatCpc,
   formatIntent,
   formatMonthLabel,
@@ -24,24 +31,70 @@ import {
   sortMonthlyPoints,
 } from "../../components/keywords/format";
 import type { MarketSelection } from "../../components/keywords/market";
-import { useKeywordOverview } from "../../components/keywords/queries";
+import {
+  useKeywordOverview,
+  useRefreshKeywordSearch,
+} from "../../components/keywords/queries";
 import { TrendLineChart } from "../../components/charts";
-import { Badge, Card, CardContent, CardHeader, CardTitle, MetricCard } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  MetricCard,
+  useToast,
+} from "../../components/ui";
+import type { KeywordCacheMode } from "./research-tabs";
+import type { KeywordTabId } from "./search-params";
+import { TAB_LABELS } from "./search-params";
 
 export function KeywordOverviewStrip({
   workspaceId,
   keyword,
   market,
+  tab,
+  cacheMode = "auto",
+  onRefreshed,
 }: {
   workspaceId: string | null;
   keyword: string;
   market: MarketSelection;
+  /** The list tab a Refresh should re-fetch alongside the overview. */
+  tab: KeywordTabId;
+  cacheMode?: KeywordCacheMode;
+  /** Called after a successful refresh, so the tab can leave "stale" behind. */
+  onRefreshed?: () => void;
 }) {
-  const query = useKeywordOverview(workspaceId, keyword, market);
+  const query = useKeywordOverview(workspaceId, keyword, market, cacheMode);
   useApiErrorToast(query.error, "Could not load the keyword overview");
+
+  const { toast } = useToast();
+  const refresh = useRefreshKeywordSearch(workspaceId, keyword, market, tab);
+  useApiErrorToast(refresh.error, "Could not refresh this keyword");
 
   const data = query.data;
   const loading = query.isPending;
+
+  /*
+   * One press, one billed pass. The button is disabled while the pair is in
+   * flight so an impatient second click cannot buy a second one, and it stays
+   * disabled until the overview has loaded at all — refreshing something that
+   * has never been fetched is just a slower, dearer search.
+   */
+  function onRefresh() {
+    refresh.mutate(undefined, {
+      onSuccess: (result) => {
+        onRefreshed?.();
+        toast({
+          title: "Refreshed from DataForSEO",
+          description: `${TAB_LABELS[tab]} and the overview cost ${formatCost(result.costUsd)}.`,
+          tone: "success",
+        });
+      },
+    });
+  }
 
   if (query.isError) {
     return <ApiErrorNotice error={query.error} onRetry={() => void query.refetch()} />;
@@ -63,7 +116,28 @@ export function KeywordOverviewStrip({
     <section className="flex flex-col gap-4" aria-label="Keyword overview">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-foreground">Overview</h2>
-        <CostChip meta={data} />
+
+        {/* One provenance chip, not two: "cached · may be outdated" already
+            says it came from the cache, so the plain Cached chip stands down. */}
+        {data?.stale === true ? (
+          <StaleChip stale />
+        ) : (
+          <CostChip meta={data} />
+        )}
+        <UpdatedChip fetchedAt={data?.fetchedAt} />
+
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          onClick={onRefresh}
+          loading={refresh.isPending}
+          disabled={data === undefined}
+          title={`Fetches this keyword and the ${TAB_LABELS[tab].toLowerCase()} list live from DataForSEO, and bills your account for both.`}
+        >
+          <RefreshCw className="size-3.5" aria-hidden="true" />
+          Refresh
+        </Button>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

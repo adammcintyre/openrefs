@@ -48,6 +48,12 @@ interface KeywordTableContext {
    * cannot track is not a useful thing to show.
    */
   onTrack?: (rows: KeywordRow[]) => void;
+  /**
+   * Research this keyword in its own tab (Phase 9). Optional for the same
+   * reason as `onTrack`: a caller with nowhere to open a tab renders the
+   * keyword as plain text rather than as a button that goes nowhere.
+   */
+  onOpenKeyword?: (keyword: string) => void;
 }
 
 const RowContext = createContext<KeywordTableContext | null>(null);
@@ -108,6 +114,33 @@ function SelectCell({ keyword }: { keyword: string }) {
   );
 }
 
+/**
+ * The keyword itself, as the drill-down affordance.
+ *
+ * The text is the control because the text is what the user is reading when
+ * they decide to follow it — an extra "research" button in the actions column
+ * would be a second thing to find for the module's most common move. Falls back
+ * to plain text when the caller has no tab strip to open into.
+ */
+function KeywordCell({ keyword }: { keyword: string }) {
+  const { onOpenKeyword } = useRowContext();
+
+  if (onOpenKeyword === undefined) {
+    return <span className="font-medium break-words">{keyword}</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenKeyword(keyword)}
+      title={`Research ${keyword} in a new tab`}
+      className="text-left font-medium break-words underline decoration-transparent underline-offset-2 transition-colors hover:text-primary hover:decoration-current"
+    >
+      {keyword}
+    </button>
+  );
+}
+
 function ActionsCell({ row }: { row: KeywordRow }) {
   const { onViewSerp, onAddToCollection, onTrack } = useRowContext();
   return (
@@ -157,9 +190,7 @@ const columns: Array<DataTableColumn<KeywordRow>> = [
   }),
   col.accessor("keyword", {
     header: "Keyword",
-    cell: (info) => (
-      <span className="font-medium break-words">{info.getValue<string>()}</span>
-    ),
+    cell: (info) => <KeywordCell keyword={info.getValue<string>()} />,
   }),
   col.accessor((row) => row.searchVolume ?? undefined, {
     id: "searchVolume",
@@ -206,6 +237,7 @@ export function KeywordTable({
   onViewSerp,
   onAddToCollection,
   onTrack,
+  onOpenKeyword,
   emptyState,
 }: {
   rows: ReadonlyArray<KeywordRow>;
@@ -219,6 +251,8 @@ export function KeywordTable({
   onAddToCollection: (rows: KeywordRow[]) => void;
   /** Omit to hide the Track action entirely. */
   onTrack?: (rows: KeywordRow[]) => void;
+  /** Omit to render keywords as plain text rather than drill-down links. */
+  onOpenKeyword?: (keyword: string) => void;
   emptyState?: React.ReactNode;
 }) {
   return (
@@ -231,6 +265,7 @@ export function KeywordTable({
         onViewSerp,
         onAddToCollection,
         onTrack,
+        onOpenKeyword,
       }}
     >
       <DataTable

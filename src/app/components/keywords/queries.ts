@@ -11,6 +11,17 @@
  *    (see the TTL table in docs/ARCHITECTURE.md), so a long `staleTime` costs
  *    the user nothing in freshness and saves them round trips. Spending is
  *    something the user asks for — a search, "Load more", or Refresh.
+ *
+ * Phase 9 adds a third, which is really the first two applied to the cache
+ * controls themselves:
+ *
+ * 3. **`cacheMode` is a `queryFn` argument, never part of a query key.** A tab
+ *    reopened from the search history asks for `stale=true` (serve the stored
+ *    copy however old it is — $0, no upstream call), and returns to `"auto"`
+ *    once the user refreshes. If the mode were keyed, that transition would
+ *    mint a second cache entry for the same search and TanStack would fetch it,
+ *    turning a mode change into a bill. Keyed on the search alone, the mode only
+ *    colours fetches that were going to happen anyway.
  */
 import {
   useInfiniteQuery,
@@ -34,6 +45,7 @@ import type {
   MetaLocationsResponse,
 } from "../../../shared/keywords";
 import { api } from "../../lib/api";
+import type { KeywordCacheMode } from "../../routes/keyword-research/research-tabs";
 import type { KeywordTabId } from "../../routes/keyword-research/search-params";
 import type { MarketSelection } from "./market";
 
@@ -96,15 +108,89 @@ function queryString(parts: Record<string, string | number | boolean | undefined
 
 /** The market half every keyword endpoint shares. */
 function marketParams(
-  workspaceId: string,
+  workspaceId: string | null,
   keyword: string,
   market: MarketSelection,
 ) {
   return {
-    workspace: workspaceId,
+    workspace: workspaceId ?? "",
     keyword,
     location: market.locationCode,
     language: market.languageCode,
+  };
+}
+
+/**
+ * The cache half.
+ *
+ * `stale=true` is sent only for a mode that asked for it, and `fresh=true` never
+ * appears here at all — the refresh mutations below are its only source, so
+ * "did something bill?" is answerable by reading the call sites rather than by
+ * tracing state. The Worker rejects the two together with a 422; keeping them in
+ * separate code paths means we cannot send that pair by accident.
+ */
+function cacheParams(mode: KeywordCacheMode): { stale?: true } {
+  return mode === "stale" ? { stale: true } : {};
+}
+
+/**
+ * Every keyword request the module makes, as a path.
+ *
+ * Exported and pure so the billing invariants are testable as strings rather
+ * than inferred from component behaviour: which requests carry `fresh=true`,
+ * which carry `stale=true`, and — the one that is easy to get wrong — that
+ * mounting, switching tabs and reopening from history carry neither.
+ */
+export function keywordOverviewPath(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
+): string {
+  return `/keywords/overview?${queryString({
+    ...marketParams(workspaceId, keyword, market),
+    ...cacheParams(cacheMode),
+  })}`;
+}
+
+export function keywordListPath(
+  workspaceId: string | null,
+  tab: KeywordTabId,
+  keyword: string,
+  market: MarketSelection,
+  offset: number,
+  cacheMode: KeywordCacheMode = "auto",
+): string {
+  return `/keywords/${tab}?${queryString({
+    ...marketParams(workspaceId, keyword, market),
+    limit: PAGE_SIZE,
+    offset,
+    ...cacheParams(cacheMode),
+  })}`;
+}
+
+/**
+ * The two requests one Refresh press makes, and the only two paths in the
+ * module that carry `fresh=true`.
+ *
+ * The list is pinned to `offset: 0`: refreshing means "the first page again,
+ * live", never re-buying every page the user had scrolled through.
+ */
+export function keywordRefreshPaths(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+): { overview: string; list: string } {
+  const shared = marketParams(workspaceId, keyword, market);
+  return {
+    overview: `/keywords/overview?${queryString({ ...shared, fresh: true })}`,
+    list: `/keywords/${tab}?${queryString({
+      ...shared,
+      limit: PAGE_SIZE,
+      offset: 0,
+      fresh: true,
+    })}`,
   };
 }
 
@@ -148,14 +234,13 @@ export function useKeywordOverview(
   workspaceId: string | null,
   keyword: string,
   market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
 ) {
   return useQuery({
     queryKey: keywordKeys.overview(workspaceId ?? "", keyword, market),
     queryFn: () =>
       api.get<KeywordOverviewResponse>(
-        `/keywords/overview?${queryString(
-          marketParams(workspaceId ?? "", keyword, market),
-        )}`,
+        keywordOverviewPath(workspaceId, keyword, market, cacheMode),
       ),
     enabled: workspaceId !== null && keyword !== "",
     ...PAID_QUERY_OPTIONS,
@@ -175,16 +260,13 @@ export function useKeywordList(
   tab: KeywordTabId,
   keyword: string,
   market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
 ) {
   return useInfiniteQuery({
     queryKey: keywordKeys.list(workspaceId ?? "", tab, keyword, market),
     queryFn: ({ pageParam }) =>
       api.get<KeywordListResponse>(
-        `/keywords/${tab}?${queryString({
-          ...marketParams(workspaceId ?? "", keyword, market),
-          limit: PAGE_SIZE,
-          offset: pageParam,
-        })}`,
+        keywordListPath(workspaceId, tab, keyword, market, pageParam, cacheMode),
       ),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
@@ -246,6 +328,80 @@ export function useRefreshSerp(
       queryClient.setQueryData(
         keywordKeys.serp(workspaceId ?? "", keyword, market),
         data,
+      );
+    },
+  });
+}
+
+/**
+ * What one Refresh press spent, so the UI can say so.
+ *
+ * Both halves are reported because they are two calls to two priced endpoints
+ * and a single figure would hide which one is expensive.
+ */
+export interface KeywordRefreshResult {
+  overview: KeywordOverviewResponse;
+  list: KeywordListResponse;
+  costUsd: number;
+}
+
+/**
+ * Re-fetches the searched keyword live: the overview, plus the first page of
+ * whichever list the user is looking at.
+ *
+ * The scope is the product decision. "Refresh" has to mean one predictable
+ * charge, so it touches exactly the two things on screen — never the other two
+ * tabs, never another research tab, and never page two of anything. Each of the
+ * two requests carries `fresh=true` exactly once, which is the whole of the
+ * module's spending surface outside an explicit search and "Load more".
+ *
+ * Results are written straight into the cache rather than invalidated, mirroring
+ * `useRefreshSerp`: an invalidate would refetch what we have just paid for. The
+ * infinite query is reset to a single page, because page two of the previous
+ * fetch describes a ranking that has just moved underneath it.
+ */
+/**
+ * Fetches the pair live. Split from the hook so the two requests can be
+ * asserted directly — one press has to mean two calls, each carrying
+ * `fresh=true` exactly once, and that is a claim worth testing rather than
+ * trusting.
+ *
+ * `Promise.all` rather than a sequence: they are independent, and failing the
+ * whole press on either error keeps "did this cost me one pass or two?"
+ * answerable. A half-failed refresh has still rewritten what it fetched into
+ * the Worker's cache, so the retry reads it back for nothing.
+ */
+export async function refreshKeywordSearch(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+): Promise<KeywordRefreshResult> {
+  const paths = keywordRefreshPaths(workspaceId, keyword, market, tab);
+  const [overview, list] = await Promise.all([
+    api.get<KeywordOverviewResponse>(paths.overview),
+    api.get<KeywordListResponse>(paths.list),
+  ]);
+  return { overview, list, costUsd: overview.costUsd + list.costUsd };
+}
+
+export function useRefreshKeywordSearch(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => refreshKeywordSearch(workspaceId, keyword, market, tab),
+    onSuccess: ({ overview, list }) => {
+      queryClient.setQueryData(
+        keywordKeys.overview(workspaceId ?? "", keyword, market),
+        overview,
+      );
+      queryClient.setQueryData(
+        keywordKeys.list(workspaceId ?? "", tab, keyword, market),
+        { pages: [list], pageParams: [0] },
       );
     },
   });

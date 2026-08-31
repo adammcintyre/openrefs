@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_MARKET } from "../../components/keywords/market";
 import {
+  DEFAULT_TAB,
+  KEYWORD_TABS,
+  TAB_LABELS,
   buildSearchParams,
   buildSearchString,
   parseSearchParams,
@@ -12,8 +15,32 @@ const state = (patch: Partial<KeywordSearchState> = {}): KeywordSearchState => (
   keyword: "seo tools",
   locationCode: 2826,
   languageCode: "en",
-  tab: "ideas",
+  tab: "suggestions",
   ...patch,
+});
+
+/*
+ * Phase 9 feedback: Ideas returns the seed's *category*, not the seed, so it
+ * led with the loosest of the three lists. The order and the single label
+ * source are the whole change, so they are pinned here rather than left
+ * implicit in the parser tests below.
+ */
+describe("tab order", () => {
+  it("leads with Suggestions and trails with Ideas", () => {
+    expect(KEYWORD_TABS).toEqual(["suggestions", "related", "ideas"]);
+  });
+
+  it("defaults to the first tab", () => {
+    expect(DEFAULT_TAB).toBe("suggestions");
+    expect(KEYWORD_TABS[0]).toBe(DEFAULT_TAB);
+  });
+
+  it("labels every tab, and only the tabs", () => {
+    expect(Object.keys(TAB_LABELS).sort()).toEqual([...KEYWORD_TABS].sort());
+    expect(TAB_LABELS.ideas).toBe("Ideas");
+    expect(TAB_LABELS.suggestions).toBe("Suggestions");
+    expect(TAB_LABELS.related).toBe("Related");
+  });
 });
 
 describe("parseSearchParams", () => {
@@ -35,7 +62,7 @@ describe("parseSearchParams", () => {
       keyword: "schuhe",
       locationCode: 2276,
       languageCode: "de",
-      tab: "ideas",
+      tab: "suggestions",
     });
   });
 
@@ -44,7 +71,7 @@ describe("parseSearchParams", () => {
       keyword: "",
       locationCode: DEFAULT_MARKET.locationCode,
       languageCode: DEFAULT_MARKET.languageCode,
-      tab: "ideas",
+      tab: "suggestions",
     });
   });
 
@@ -87,9 +114,9 @@ describe("parseSearchParams", () => {
       .toBe("pt-BR");
   });
 
-  it("falls back to the ideas tab for an unknown tab", () => {
+  it("falls back to the default tab for an unknown tab", () => {
     expect(parseSearchParams(new URLSearchParams("tab=backlinks")).tab).toBe(
-      "ideas",
+      "suggestions",
     );
   });
 });
@@ -103,9 +130,7 @@ describe("buildSearchParams", () => {
 
   it("omits the default tab and keeps a non-default one", () => {
     expect(buildSearchParams(state()).has("tab")).toBe(false);
-    expect(buildSearchParams(state({ tab: "suggestions" })).get("tab")).toBe(
-      "suggestions",
-    );
+    expect(buildSearchParams(state({ tab: "ideas" })).get("tab")).toBe("ideas");
   });
 
   // A URL with no search in it should be the bare route, not `?q=`.
@@ -126,7 +151,7 @@ describe("round trip", () => {
     state(),
     state({ tab: "related", locationCode: 2840 }),
     state({ keyword: "café & crème", languageCode: "fr", locationCode: 2250 }),
-    state({ keyword: "a+b=c?d#e", tab: "suggestions" }),
+    state({ keyword: "a+b=c?d#e", tab: "ideas" }),
   ])("survives build -> parse unchanged (%#)", (original) => {
     expect(parseSearchParams(buildSearchParams(original))).toEqual(original);
   });

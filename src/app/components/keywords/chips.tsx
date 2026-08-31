@@ -8,11 +8,17 @@
  * someone form an accurate model of what their clicking costs — and makes the
  * cache visibly worth something, because the same query a second time is free.
  */
-import { Database, Zap } from "lucide-react";
+import { Clock, Database, History, Zap } from "lucide-react";
 
 import type { ResultMeta } from "../../../shared/api";
 import { Badge } from "../ui";
-import { difficultyBand, formatCost, formatIntent, intentVariant } from "./format";
+import {
+  difficultyBand,
+  formatCost,
+  formatIntent,
+  formatRelativeTime,
+  intentVariant,
+} from "./format";
 
 /**
  * "Cached" or "$0.114 live".
@@ -50,6 +56,69 @@ export function CostChip({
     >
       <Zap className="size-3" aria-hidden="true" />
       {formatCost(meta.costUsd)} live
+    </Badge>
+  );
+}
+
+/**
+ * "Updated 3 days ago" — when the payload behind this screen was really fetched.
+ *
+ * `ResultMeta.fetchedAt` is the *original* fetch even on a cache hit, which is
+ * the only honest thing to show next to a Refresh button: a cached answer that
+ * says "updated just now" because this request was quick would be a lie the
+ * user would act on. Absent or unparseable, the chip is omitted rather than
+ * guessed — "Updated unknown" tells nobody anything.
+ */
+export function UpdatedChip({
+  fetchedAt,
+  className = "",
+}: {
+  fetchedAt: string | null | undefined;
+  className?: string;
+}) {
+  const relative = formatRelativeTime(fetchedAt);
+  if (relative === null) return null;
+
+  return (
+    <Badge
+      variant="neutral"
+      className={className}
+      title={`DataForSEO returned this data on ${new Date(String(fetchedAt)).toLocaleString()}. Refresh to fetch it again.`}
+    >
+      <History className="size-3" aria-hidden="true" />
+      {`Updated ${relative}`}
+    </Badge>
+  );
+}
+
+/**
+ * The deliberately-old chip.
+ *
+ * `stale: true` alongside `cached: true` reads as "from cache, and older than
+ * we would normally serve" (see `ResultMeta` in src/shared/api.ts). Two paths
+ * set it, and the wording covers both without pretending to know which: a
+ * refresh that timed out upstream and fell back to the last good copy, and this
+ * module's own history flow, which asks for the old copy outright so reopening
+ * a past search costs nothing. Either way the data is real and may have moved,
+ * which is exactly what a Refresh button is for.
+ */
+export function StaleChip({
+  stale,
+  className = "",
+}: {
+  stale: boolean | undefined;
+  className?: string;
+}) {
+  if ((stale ?? false) !== true) return null;
+
+  return (
+    <Badge
+      variant="warning"
+      className={className}
+      title="Served from the stored copy rather than a live call, so nothing was billed. It is real data, but it may describe an older version of these results — Refresh to fetch it again."
+    >
+      <Clock className="size-3" aria-hidden="true" />
+      cached · may be outdated
     </Badge>
   );
 }
