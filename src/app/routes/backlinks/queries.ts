@@ -21,6 +21,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import type {
   AnchorsResponse,
+  BacklinkSort,
   BacklinksHistoryResponse,
   BacklinksListMode,
   BacklinksListResponse,
@@ -121,17 +122,58 @@ export function useBacklinksHistory(
 }
 
 /**
+ * Everything the backlinks list takes, as one URL.
+ *
+ * Exported because every one of these is a *server-side* narrowing — the
+ * provider applies the sort as its `order_by` and the filters as its own
+ * conditions — so what lands in this query string is what the workspace pays
+ * for. Asserting on it is how the "changing sort is a fresh query, not a
+ * client-side reshuffle" contract stays honest.
+ */
+export function backlinksListParams(
+  workspaceId: string | null,
+  target: string,
+  options: {
+    mode: BacklinksListMode;
+    filters: LinkFilters;
+    sort: BacklinkSort;
+    offset?: number;
+  },
+): URLSearchParams {
+  const params = pageParams(workspaceId ?? "", target, options.offset ?? 0);
+  params.set("mode", options.mode);
+  params.set("sort", options.sort);
+  if (options.filters.dofollow === true) params.set("dofollow", "true");
+  if (options.filters.minDomainScore !== undefined) {
+    params.set("minDomainScore", String(options.filters.minDomainScore));
+  }
+  if (options.filters.anchor !== undefined) {
+    params.set("anchor", options.filters.anchor);
+  }
+  if (options.filters.maxSpamScore !== undefined) {
+    params.set("maxSpamScore", String(options.filters.maxSpamScore));
+  }
+  return params;
+}
+
+/**
  * The Backlinks tab.
  *
- * `mode` and the filters are all in the key because they are all part of the
- * *query*: `one_per_domain` groups upstream and the filters are applied by
- * DataForSEO, so each combination is a different purchase rather than a
- * different view of rows already bought.
+ * `mode`, `sort` and the filters are all in the key because they are all part
+ * of the *query*: `one_per_domain` groups upstream, the sort is the provider's
+ * `order_by`, and the filters are applied by DataForSEO. Each combination is a
+ * different purchase rather than a different view of rows already bought — so
+ * the cache must keep them apart, and the UI has to say so.
  */
 export function useBacklinksList(
   workspaceId: string | null,
   target: string,
-  options: { mode: BacklinksListMode; filters: LinkFilters; enabled: boolean },
+  options: {
+    mode: BacklinksListMode;
+    filters: LinkFilters;
+    sort: BacklinkSort;
+    enabled: boolean;
+  },
 ) {
   return useInfiniteQuery({
     queryKey: [
@@ -140,20 +182,18 @@ export function useBacklinksList(
       workspaceId,
       target,
       options.mode,
+      options.sort,
       options.filters,
     ],
-    queryFn: ({ pageParam }) => {
-      const params = pageParams(workspaceId ?? "", target, pageParam);
-      params.set("mode", options.mode);
-      if (options.filters.dofollow === true) params.set("dofollow", "true");
-      if (options.filters.minDomainScore !== undefined) {
-        params.set("minDomainScore", String(options.filters.minDomainScore));
-      }
-      if (options.filters.anchor !== undefined) {
-        params.set("anchor", options.filters.anchor);
-      }
-      return api.get<BacklinksListResponse>(`/backlinks/list?${params}`);
-    },
+    queryFn: ({ pageParam }) =>
+      api.get<BacklinksListResponse>(
+        `/backlinks/list?${backlinksListParams(workspaceId, target, {
+          mode: options.mode,
+          filters: options.filters,
+          sort: options.sort,
+          offset: pageParam,
+        })}`,
+      ),
     initialPageParam: 0,
     getNextPageParam: nextOffset,
     enabled: options.enabled && workspaceId !== null,

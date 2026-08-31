@@ -22,12 +22,14 @@ import { describe, expect, it } from "vitest";
 import type { MetaLocationsResponse } from "../../../shared/keywords";
 import type { ProjectListResponse } from "../../../shared/projects";
 import type {
+  RankSummaryResponse,
   TrackedKeywordRow,
   TrackedKeywordsResponse,
 } from "../../../shared/tracking";
 import type { Workspace } from "../../../shared/workspaces";
 import { RANK_CHECK_COST_PER_KEYWORD_USD } from "../../../shared/tracking";
 import { formatCostHint } from "../../components/tracking/format";
+import { DEFAULT_RANK_SUMMARY_RANGE } from "../../components/tracking/queries";
 import { ToastProvider } from "../../components/ui/toast";
 import { RankTrackingModule } from "./module";
 
@@ -158,6 +160,44 @@ const EMPTY_PROJECT: TrackedKeywordsResponse = {
   checkInProgress: true,
 };
 
+/**
+ * The overview rollup, with **20 August missing**.
+ *
+ * That gap is the point of the fixture: the contract says days can be absent
+ * (a project first checked on a Tuesday has no Monday row), so the chart has to
+ * plot by `date` and never treat an array index as a day.
+ */
+const SUMMARY: RankSummaryResponse = {
+  days: 30,
+  points: [
+    {
+      date: "2026-08-19",
+      avgPosition: 14.5,
+      top3: 1,
+      top10: 2,
+      top100: 3,
+      tracked: 3,
+    },
+    {
+      date: "2026-08-21",
+      avgPosition: 9.25,
+      top3: 1,
+      top10: 3,
+      top100: 3,
+      tracked: 3,
+    },
+    {
+      // A day where nothing ranked: a gap in the line, never a crash to zero.
+      date: "2026-08-22",
+      avgPosition: null,
+      top3: 0,
+      top10: 0,
+      top100: 0,
+      tracked: 3,
+    },
+  ],
+};
+
 function seededClient(): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -172,6 +212,16 @@ function seededClient(): QueryClient {
   client.setQueryData(
     ["tracking", "keywords", WORKSPACE_ID, OTHER_PROJECT_ID],
     EMPTY_PROJECT,
+  );
+  client.setQueryData(
+    [
+      "tracking",
+      "summary",
+      WORKSPACE_ID,
+      PROJECT_ID,
+      DEFAULT_RANK_SUMMARY_RANGE,
+    ],
+    SUMMARY,
   );
   return client;
 }
@@ -302,6 +352,43 @@ describe("a project with no keywords yet", () => {
 
   it("says it has never been checked", () => {
     expect(html).toContain("Not checked yet");
+  });
+});
+
+/* ----------------------------- overview chart ------------------------------ */
+
+describe("the overview chart", () => {
+  const html = render(`/app/rank-tracking?project=${PROJECT_ID}`);
+
+  it("sits at the top of the page with both views and both ranges", () => {
+    expect(html).toContain("Ranking overview");
+    expect(html).toContain("Rankings");
+    expect(html).toContain("Average position");
+    expect(html).toContain("30 days");
+    expect(html).toContain("90 days");
+  });
+
+  it("opens on the cumulative band view", () => {
+    expect(html).toContain("The bands are cumulative");
+  });
+
+  /*
+   * Recharts is code-split, so a server render gets the Suspense fallback
+   * rather than the SVG. What is provable here is that the card mounts, that
+   * the controls are wired, and that a series with a missing day does not
+   * throw on the way in — which is what `toChartData` is unit-tested for.
+   */
+  it("mounts with a sparse series without throwing", () => {
+    expect(() => render(`/app/rank-tracking?project=${PROJECT_ID}`)).not.toThrow();
+  });
+
+  /**
+   * A project with nothing tracked has no snapshots by definition; an empty
+   * chart above an empty table is two ways of saying the same nothing.
+   */
+  it("stays away from a project with no tracked keywords", () => {
+    const empty = render(`/app/rank-tracking?project=${OTHER_PROJECT_ID}`);
+    expect(empty).not.toContain("Ranking overview");
   });
 });
 

@@ -42,6 +42,16 @@ export interface TrendLineChartProps<
   height?: number;
   /** Tooltip formatting; axis labels always use the compact form. */
   valueFormatter?: ValueFormatter;
+  /**
+   * Flips the y axis so the smallest value is at the top.
+   *
+   * For search positions, where 1 is the best result anyone can have: drawn the
+   * ordinary way up, a site climbing from 30 to 3 would have a line that falls,
+   * which reads as the opposite of what happened.
+   */
+  yReversed?: boolean;
+  /** Explicit y bounds. Recharts' own `["auto", "auto"]` otherwise. */
+  yDomain?: [number | "auto" | "dataMin" | "dataMax", number | "auto" | "dataMin" | "dataMax"];
   className?: string;
 }
 
@@ -57,6 +67,8 @@ export function TrendLineChart<TDatum extends Record<string, unknown>>({
   series,
   height = 280,
   valueFormatter = formatFull,
+  yReversed = false,
+  yDomain,
   className = "",
 }: TrendLineChartProps<TDatum>) {
   const reducedMotion = useReducedMotion();
@@ -96,6 +108,8 @@ export function TrendLineChart<TDatum extends Record<string, unknown>>({
             tickLine={false}
             axisLine={false}
             tickMargin={8}
+            reversed={yReversed}
+            domain={yDomain}
             tickFormatter={(value: number | string) =>
               typeof value === "number" ? formatCompact(value) : String(value)
             }

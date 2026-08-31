@@ -10,8 +10,15 @@
  *    409/402 will never succeed on a second attempt.
  * 2. **Nothing fetches until it is asked for.** The query is `enabled` only for
  *    a target with at least one competitor.
+ *
+ * **Cache mode is a request parameter, never a query key.** Re-opening a
+ * comparison from the search trail asks the Worker for its cached copy even
+ * past the soft TTL (`stale=true`, $0, no upstream call); Refresh asks it to
+ * bypass the cache and bill (`fresh=true`). Both describe *this fetch*, not
+ * *this result*, so neither belongs in a key — putting one there would fork the
+ * client cache into two copies of the same comparison.
  */
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { GapKeywordsResponse, GapPagesResponse } from "../../../shared/gap";
 import { api } from "../../lib/api";
@@ -34,13 +41,27 @@ const NO_RETRY = { retry: false } as const;
 const RESULT_STALE_TIME = 60 * 60_000;
 
 /**
+ * How this fetch may use the server-side cache.
+ *
+ * `auto` is the ordinary path; `stale` accepts an expired copy rather than
+ * spending, which is what makes a click in the search trail free. Bypassing the
+ * cache is not a member here — that is a mutation, not a mode a mounting query
+ * can fall into.
+ */
+export type CacheMode = "auto" | "stale";
+
+/**
  * Everything both the JSON route and the CSV export take, so a spreadsheet is
  * always the same query as the table it was exported from.
+ *
+ * The export deliberately never passes a cache mode: a CSV is a fresh
+ * server-side render of the comparison, not a re-read of what is on screen.
  */
 export function gapQueryParams(
   workspaceId: string | null,
   search: GapSearch,
   filters: GapFilters,
+  cacheMode: CacheMode = "auto",
 ): URLSearchParams {
   const params = new URLSearchParams({
     workspace: workspaceId ?? "",
@@ -56,7 +77,47 @@ export function gapQueryParams(
     params.set(key, String(value));
   }
 
+  if (cacheMode === "stale") params.set("stale", "true");
+
   return params;
+}
+
+/**
+ * The same comparison, told to bypass the cache and bill.
+ *
+ * The only builder here that sets `fresh`, and it is reachable only from
+ * `useRefreshGap` — which is reachable only from a button press. Never carries
+ * `stale`: the pair is a 422 by contract.
+ */
+export function gapFreshParams(
+  workspaceId: string | null,
+  search: GapSearch,
+  filters: GapFilters,
+): URLSearchParams {
+  const params = gapQueryParams(workspaceId, search, filters);
+  params.set("fresh", "true");
+  params.set("limit", String(PAGE_SIZE));
+  params.set("offset", "0");
+  return params;
+}
+
+/** The gap table's key. Cache mode is absent by design — see the file header. */
+export function gapKeywordsKey(
+  workspaceId: string | null,
+  search: GapSearch,
+  filters: GapFilters,
+) {
+  return [
+    "gap",
+    "keywords",
+    workspaceId,
+    search.target,
+    search.competitors.join(","),
+    search.location,
+    search.language,
+    search.mode,
+    filters,
+  ] as const;
 }
 
 /**
@@ -100,21 +161,12 @@ export function useGapKeywords(
   search: GapSearch,
   filters: GapFilters,
   enabled: boolean,
+  cacheMode: CacheMode = "auto",
 ) {
   return useInfiniteQuery({
-    queryKey: [
-      "gap",
-      "keywords",
-      workspaceId,
-      search.target,
-      search.competitors.join(","),
-      search.location,
-      search.language,
-      search.mode,
-      filters,
-    ],
+    queryKey: gapKeywordsKey(workspaceId, search, filters),
     queryFn: ({ pageParam }) => {
-      const params = gapQueryParams(workspaceId, search, filters);
+      const params = gapQueryParams(workspaceId, search, filters, cacheMode);
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(pageParam));
       return api.get<GapKeywordsResponse>(`/gap/keywords?${params}`);
@@ -174,6 +226,43 @@ export function useGapPages(
     enabled: enabled && workspaceId !== null,
     staleTime: RESULT_STALE_TIME,
     ...NO_RETRY,
+  });
+}
+
+/**
+ * One deliberate, billed re-run of the comparison.
+ *
+ * A mutation rather than `refetch()`, for the reason the keywords module's
+ * `useRefreshSerp` is one: `refetch` re-runs the query function, which does not
+ * set `fresh=true` — it would hand back the same cached bytes and look like a
+ * Refresh that did nothing. So this fetches page one with `fresh=true` and
+ * writes it into the existing infinite-query entry.
+ *
+ * **One page, not every page loaded.** A comparison is one upstream call per
+ * competitor *per page*; silently re-buying five pages because the user had
+ * paged that far would turn one click into five times the bill they expected.
+ * The pager is still there for the rest.
+ */
+export function useRefreshGap(
+  workspaceId: string | null,
+  search: GapSearch,
+  filters: GapFilters,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    // Same reasoning as the query: a failed billed call is not retried for you.
+    retry: false,
+    mutationFn: () =>
+      api.get<GapKeywordsResponse>(
+        `/gap/keywords?${gapFreshParams(workspaceId, search, filters)}`,
+      ),
+    onSuccess: (page) => {
+      queryClient.setQueryData(gapKeywordsKey(workspaceId, search, filters), {
+        pages: [page],
+        pageParams: [0],
+      });
+    },
   });
 }
 

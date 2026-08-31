@@ -136,6 +136,29 @@ export function formatLastChecked(lastCheckedAt: string | null): string {
   return lastCheckedAt === null ? "Not checked yet" : formatDay(lastCheckedAt);
 }
 
+const AXIS_DAY_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+
+/**
+ * `YYYY-MM-DD` as a short axis label: `31 Aug`.
+ *
+ * The year is dropped because ninety ticks of "2026" is ninety repetitions of
+ * something nobody is reading; the tooltip and the table still carry the full
+ * date. UTC for the same reason as `formatDay` — snapshots are day-grained and
+ * the viewer's timezone must not shift them.
+ *
+ * An unparseable value passes through unchanged rather than becoming a dash: on
+ * an axis, a run of identical dashes hides which point is which.
+ */
+export function formatAxisDay(date: string): string {
+  const parsed = Date.parse(date.length === 10 ? `${date}T00:00:00Z` : date);
+  if (Number.isNaN(parsed)) return date;
+  return AXIS_DAY_FORMAT.format(new Date(parsed));
+}
+
 /* ------------------------------ ranking URLs ------------------------------- */
 
 /*

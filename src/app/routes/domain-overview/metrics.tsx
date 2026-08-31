@@ -20,6 +20,11 @@ import {
 } from "../../components/domains/format";
 import { ResultMetaChip } from "../../components/domains/result-meta-chip";
 import {
+  RefreshButton,
+  StaleChip,
+  UpdatedChip,
+} from "../../components/history/freshness";
+import {
   Badge,
   Card,
   EmptyState,
@@ -27,7 +32,8 @@ import {
   Skeleton,
 } from "../../components/ui";
 import type { MetricDelta } from "../../components/ui";
-import { useDomainHistory, useDomainOverview } from "./queries";
+import type { CacheMode, RefreshTarget } from "./queries";
+import { useDomainHistory, useDomainOverview, useRefreshDomain } from "./queries";
 import type { DomainSearch } from "./url-state";
 
 /** A percentage delta for a MetricCard, or nothing when it cannot be trusted. */
@@ -54,12 +60,22 @@ function pick(
 export function DomainMetrics({
   workspaceId,
   search,
+  cacheMode = "auto",
+  refreshTarget,
+  onRefreshed,
 }: {
   workspaceId: string | null;
   search: DomainSearch;
+  /** `stale` on the first load after a history click — see queries.ts. */
+  cacheMode?: CacheMode;
+  /** Which tab a Refresh should re-buy alongside the headline block. */
+  refreshTarget?: RefreshTarget;
+  /** Called once a Refresh lands, so the page can drop back to `auto`. */
+  onRefreshed?: () => void;
 }) {
-  const overview = useDomainOverview(workspaceId, search, true);
-  const history = useDomainHistory(workspaceId, search, true);
+  const overview = useDomainOverview(workspaceId, search, true, cacheMode);
+  const history = useDomainHistory(workspaceId, search, true, cacheMode);
+  const refresh = useRefreshDomain(workspaceId, search);
 
   const items = history.data?.items ?? [];
   const previousPoint = items.at(-2);
@@ -97,7 +113,23 @@ export function DomainMetrics({
           Estimated monthly performance. Traffic figures are DataForSEO
           estimates, not measured analytics.
         </p>
-        <ResultMetaChip meta={overview.data} />
+        <div className="flex flex-wrap items-center gap-2">
+          <UpdatedChip meta={overview.data} />
+          <StaleChip meta={overview.data} />
+          <ResultMetaChip meta={overview.data} />
+          {refreshTarget === undefined ? null : (
+            <RefreshButton
+              loading={refresh.isPending}
+              disabled={overview.isPending}
+              title="Fetches this domain again from DataForSEO — the headline figures and the tab you are on. This spends credits."
+              onClick={() => {
+                refresh.mutate(refreshTarget, {
+                  onSettled: () => onRefreshed?.(),
+                });
+              }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

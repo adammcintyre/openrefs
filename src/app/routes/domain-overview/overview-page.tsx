@@ -6,6 +6,13 @@
  * it does hold is the state that must *not* live in the URL, because putting it
  * there would let a stale link spend money on load — the country breakdown's
  * "yes, I accept the cost" flag most of all.
+ *
+ * **Cache mode is the other piece of non-URL state, for the same reason.** A
+ * click in the search trail re-opens a past search with `stale=true`, which the
+ * Worker answers from cache at $0 even past the soft TTL. That is a property of
+ * *how this screen was opened*, not of the search itself — so it lives here and
+ * never in the URL, where a shared link would carry someone else's "give me the
+ * old copy" into a first visit.
  */
 import { Globe, SearchX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -18,6 +25,7 @@ import {
   writeLastMarket,
 } from "../../components/domains/market-storage";
 import { useMetaLocations } from "../../components/domains/meta-queries";
+import { useInvalidateHistory } from "../../components/history/queries";
 import {
   Badge,
   Card,
@@ -30,9 +38,14 @@ import {
 import type { TabItem } from "../../components/ui";
 import { ApiError, errorMessage } from "../../lib/api";
 import { useActiveWorkspace } from "../../lib/workspaces";
+import {
+  DomainHistoryCard,
+  DomainHistoryDisclosure,
+} from "./history-panel";
 import type { KeywordFilters } from "./keyword-filters";
 import { EMPTY_FILTERS } from "./keyword-filters";
 import { DomainMetrics } from "./metrics";
+import type { CacheMode, RefreshTarget } from "./queries";
 import { useDomainOverview } from "./queries";
 import { DomainSearchForm } from "./search-form";
 import { CompetitorsTab } from "./tab-competitors";
@@ -85,10 +98,39 @@ export function DomainOverviewPage() {
    * market cannot silently re-trigger ten calls under the old consent.
    */
   const [countriesFor, setCountriesFor] = useState<string | null>(null);
+  /**
+   * `stale` from the moment a trail entry is clicked until the next explicit
+   * search or Refresh. It is deliberately absent from every query key (see
+   * queries.ts), so flipping it back to `auto` cannot itself trigger a fetch —
+   * the mode only decides what the *next* request asks for.
+   */
+  const [cacheMode, setCacheMode] = useState<CacheMode>("auto");
 
-  const overview = useDomainOverview(activeWorkspaceId, search, ready);
+  const overview = useDomainOverview(
+    activeWorkspaceId,
+    search,
+    ready,
+    cacheMode,
+  );
   const locationsQuery = useMetaLocations(activeWorkspaceId);
   const blocked = blockingError(overview.error);
+  /*
+   * A search that came back is a search the Worker has recorded, so the trail
+   * is now one entry out of date. Invalidating it is a free D1 read.
+   *
+   * The handle goes through a ref because `useInvalidateHistory` returns a
+   * fresh closure on every render: listed as a dependency it would re-run this
+   * effect on every render, and the timestamp is the real trigger anyway.
+   */
+  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "domains");
+  const invalidateHistoryRef = useRef(invalidateHistory);
+  invalidateHistoryRef.current = invalidateHistory;
+
+  const overviewUpdatedAt = overview.isSuccess ? overview.dataUpdatedAt : 0;
+  useEffect(() => {
+    if (overviewUpdatedAt === 0) return;
+    invalidateHistoryRef.current();
+  }, [overviewUpdatedAt]);
 
   // Unexpected failures also get a toast: the inline notice may be below the
   // fold when the failure lands on a tab the user just switched away from.
@@ -111,9 +153,28 @@ export function DomainOverviewPage() {
         location: next.location,
         language: next.language,
       });
+      // An explicit search is a request for current data, whatever the last
+      // thing that opened this screen was.
+      setCacheMode("auto");
       setParams(domainSearchParams({ ...next, tab: search.tab }));
     },
     [activeWorkspaceId, setParams, search.tab],
+  );
+
+  /**
+   * Re-open a past search from the trail.
+   *
+   * Same URL write as `applySearch`, and one difference that is the whole
+   * point: the next fetch carries `stale=true`, so the Worker serves whatever
+   * it has rather than buying a fresh copy. Clicking through your own history
+   * must never cost anything.
+   */
+  const openFromHistory = useCallback(
+    (target: string, market: Market) => {
+      setCacheMode("stale");
+      setParams(domainSearchParams({ ...market, target, tab: search.tab }));
+    },
+    [setParams, search.tab],
   );
 
   const selectTab = useCallback(
@@ -159,13 +220,20 @@ export function DomainOverviewPage() {
           onPaidChange={setPaid}
           filters={filters}
           onFiltersChange={setFilters}
+          cacheMode={cacheMode}
         />
       ),
     },
     {
       id: "pages",
       label: "Top pages",
-      content: <PagesTab workspaceId={activeWorkspaceId} search={search} />,
+      content: (
+        <PagesTab
+          workspaceId={activeWorkspaceId}
+          search={search}
+          cacheMode={cacheMode}
+        />
+      ),
     },
     {
       id: "competitors",
@@ -175,6 +243,7 @@ export function DomainOverviewPage() {
           workspaceId={activeWorkspaceId}
           search={search}
           onAnalyze={analyzeCompetitor}
+          cacheMode={cacheMode}
         />
       ),
     },
@@ -187,10 +256,19 @@ export function DomainOverviewPage() {
           search={search}
           requested={countriesFor === key}
           onRequest={() => setCountriesFor(key)}
+          cacheMode={cacheMode}
         />
       ),
     },
   ];
+
+  /**
+   * What Refresh re-buys alongside the headline block: the open tab, with the
+   * state that makes up its query key. Only the keywords tab has any — the
+   * others are identified by the search alone.
+   */
+  const refreshTarget: RefreshTarget =
+    search.tab === "keywords" ? { tab: "keywords", paid, filters } : { tab: search.tab };
 
   return (
     <div className="flex flex-col gap-6">
@@ -220,6 +298,23 @@ export function DomainOverviewPage() {
             busy={overview.isFetching}
           />
 
+          {/*
+            The trail sits directly under the form, in two shapes: the list is
+            the content of an empty screen, and a folded disclosure once a
+            report has pushed it out of the way.
+          */}
+          {search.target === "" ? (
+            <DomainHistoryCard
+              workspaceId={activeWorkspaceId}
+              onOpen={openFromHistory}
+            />
+          ) : (
+            <DomainHistoryDisclosure
+              workspaceId={activeWorkspaceId}
+              onOpen={openFromHistory}
+            />
+          )}
+
           {search.target === "" ? (
             <Card>
               <EmptyState
@@ -240,7 +335,13 @@ export function DomainOverviewPage() {
             <ApiErrorNotice error={blocked} />
           ) : (
             <>
-              <DomainMetrics workspaceId={activeWorkspaceId} search={search} />
+              <DomainMetrics
+                workspaceId={activeWorkspaceId}
+                search={search}
+                cacheMode={cacheMode}
+                refreshTarget={refreshTarget}
+                onRefreshed={() => setCacheMode("auto")}
+              />
               <Tabs tabs={tabs} value={search.tab} onValueChange={selectTab} />
             </>
           )}

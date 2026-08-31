@@ -19,6 +19,7 @@ import {
 } from "../../components/ui";
 import { downloadCsv } from "../../lib/csv";
 import { PAGE_CSV_HEADERS, csvFilename, pageCsvRows } from "./csv-rows";
+import type { CacheMode } from "./queries";
 import { PAGE_SIZE, useDomainPages } from "./queries";
 import { LoadMoreBar, TabShell } from "./tab-shell";
 import type { DomainSearch } from "./url-state";
@@ -75,11 +76,14 @@ const columns = [
 export function PagesTab({
   workspaceId,
   search,
+  cacheMode = "auto",
 }: {
   workspaceId: string | null;
   search: DomainSearch;
+  /** `stale` on the first load after a history click — see queries.ts. */
+  cacheMode?: CacheMode;
 }) {
-  const query = useDomainPages(workspaceId, search, true);
+  const query = useDomainPages(workspaceId, search, true, cacheMode);
 
   const rows = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],

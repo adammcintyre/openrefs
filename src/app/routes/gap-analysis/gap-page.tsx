@@ -11,7 +11,7 @@
  * you open it rather than after.
  */
 import { Download, GitCompareArrows, Layers, Search, SearchX, SlidersHorizontal, Users, X } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import type { GapKeywordRow, GapPageRow } from "../../../shared/gap";
@@ -25,6 +25,12 @@ import {
 } from "../../components/domains/market-storage";
 import { useMetaLocations } from "../../components/domains/meta-queries";
 import { ResultMetaChip } from "../../components/domains/result-meta-chip";
+import {
+  RefreshButton,
+  StaleChip,
+  UpdatedChip,
+} from "../../components/history/freshness";
+import { useInvalidateHistory } from "../../components/history/queries";
 import { AddToCollectionDialog } from "../../components/keywords/add-to-collection-dialog";
 import {
   ApiErrorNotice,
@@ -56,19 +62,24 @@ import {
   parseGapFilterDraft,
 } from "./gap-filters";
 import { GapTable } from "./gap-table";
+import type { GapHistoryOpen } from "./history-panel";
+import { GapHistoryCard, GapHistoryDisclosure } from "./history-panel";
 import type { GapPagesSubmit } from "./pages-form";
 import { GapPagesView } from "./pages-view";
+import type { CacheMode } from "./queries";
 import {
   GAP_CSV_MAX_ROWS,
   PAGE_SIZE,
   gapExportUrl,
   useGapKeywords,
+  useRefreshGap,
 } from "./queries";
 import { GapSearchForm } from "./search-form";
 import type { GapSubmit } from "./search-form";
 import type { GapView } from "./url-state";
 import {
   DEFAULT_MARKET,
+  DEFAULT_MODE,
   GAP_VIEWS,
   gapSearchKey,
   gapSearchParams,
@@ -167,6 +178,12 @@ export function GapAnalysisPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [serpKeyword, setSerpKeyword] = useState<string | null>(null);
   const [addTargets, setAddTargets] = useState<KeywordToAdd[] | null>(null);
+  /**
+   * `stale` from the moment a trail entry is clicked until the next explicit
+   * comparison or Refresh. Never in the URL and never in a query key (see
+   * queries.ts), so flipping it back to `auto` cannot itself fetch anything.
+   */
+  const [cacheMode, setCacheMode] = useState<CacheMode>("auto");
 
   /*
    * A selection is a set of keyword strings, which only means something
@@ -181,10 +198,34 @@ export function GapAnalysisPage() {
     setSelected(new Set());
   }
 
-  const query = useGapKeywords(activeWorkspaceId, search, filters, ready);
+  const query = useGapKeywords(
+    activeWorkspaceId,
+    search,
+    filters,
+    ready,
+    cacheMode,
+  );
+  const refresh = useRefreshGap(activeWorkspaceId, search, filters);
   const locationsQuery = useMetaLocations(activeWorkspaceId);
-
   useApiErrorToast(query.error, "Gap analysis failed");
+
+  /*
+   * A comparison that came back is one the Worker has recorded, so the trail is
+   * an entry out of date. Invalidating it is a free D1 read.
+   *
+   * The handle goes through a ref because `useInvalidateHistory` returns a
+   * fresh closure on every render: listed as a dependency it would re-run this
+   * effect on every render, and the timestamp is the real trigger anyway.
+   */
+  const invalidateHistory = useInvalidateHistory(activeWorkspaceId, "gap");
+  const invalidateHistoryRef = useRef(invalidateHistory);
+  invalidateHistoryRef.current = invalidateHistory;
+
+  const gapUpdatedAt = query.isSuccess ? query.dataUpdatedAt : 0;
+  useEffect(() => {
+    if (gapUpdatedAt === 0) return;
+    invalidateHistoryRef.current();
+  }, [gapUpdatedAt]);
 
   const rows = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],
@@ -194,7 +235,8 @@ export function GapAnalysisPage() {
     () => aggregateMeta(query.data?.pages ?? []),
     [query.data],
   );
-  const total = query.data?.pages[0]?.totalCount ?? null;
+  const firstPage = query.data?.pages[0];
+  const total = firstPage?.totalCount ?? null;
   const filterCount = activeGapFilterCount(filters);
 
   /**
@@ -218,6 +260,9 @@ export function GapAnalysisPage() {
         location: next.location,
         language: next.language,
       });
+      // An explicit comparison is a request for current data, whatever opened
+      // this screen last.
+      setCacheMode("auto");
       // A keyword comparison keeps whatever the pages view had in it, so
       // flicking back and forth does not throw away either side's work.
       setParams(
@@ -230,6 +275,31 @@ export function GapAnalysisPage() {
       );
     },
     [activeWorkspaceId, setParams, search.mode, search.pages],
+  );
+
+  /**
+   * Re-open a past comparison from the trail.
+   *
+   * The recorded params do not carry a mode — it selects a view over rows the
+   * query already covers — so this rebuilds the URL at the default one, in the
+   * keywords view, and the next fetch carries `stale=true` so the click is free.
+   */
+  const openFromHistory = useCallback(
+    (open: GapHistoryOpen) => {
+      setCacheMode("stale");
+      setParams(
+        gapSearchParams({
+          target: open.target,
+          competitors: open.competitors,
+          location: open.location,
+          language: open.language,
+          mode: DEFAULT_MODE,
+          view: "keywords",
+          pages: search.pages,
+        }),
+      );
+    },
+    [setParams, search.pages],
   );
 
   const selectMode = useCallback(
@@ -336,8 +406,26 @@ export function GapAnalysisPage() {
           ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/*
+            Freshness comes off page one rather than off `meta`: aggregateMeta
+            rolls several pages into a cost and a cached flag, which is the
+            right summary for money and the wrong one for "when was this
+            fetched" — page one is the fetch the chip is describing.
+          */}
+          <UpdatedChip meta={firstPage} />
+          <StaleChip meta={firstPage} />
           <ResultMetaChip meta={meta} />
+          <RefreshButton
+            loading={refresh.isPending}
+            disabled={query.isPending}
+            title="Runs this comparison again against DataForSEO — one call per competitor. This spends credits."
+            onClick={() => {
+              refresh.mutate(undefined, {
+                onSettled: () => setCacheMode("auto"),
+              });
+            }}
+          />
           <AnchorButton
             href={gapExportUrl(activeWorkspaceId, search, filters)}
             variant="secondary"
@@ -650,6 +738,22 @@ export function GapAnalysisPage() {
             onSubmit={applySearch}
             busy={query.isFetching}
           />
+
+          {/*
+            The trail: the content of an empty screen, and a folded disclosure
+            once a comparison has pushed it out of the way.
+          */}
+          {search.target === "" ? (
+            <GapHistoryCard
+              workspaceId={activeWorkspaceId}
+              onOpen={openFromHistory}
+            />
+          ) : (
+            <GapHistoryDisclosure
+              workspaceId={activeWorkspaceId}
+              onOpen={openFromHistory}
+            />
+          )}
 
           {search.target === "" ? (
             <Card>

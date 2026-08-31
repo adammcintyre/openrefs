@@ -78,6 +78,9 @@ describe("backlinkCsvRows", () => {
       "https://brandpacks.com/pricing",
       "true",
       "anchor",
+      // The provider's number, raw. Ungraded and unrounded: the grading is a
+      // reading aid for the table, and a spreadsheet wants to do its own.
+      3,
       // The date half only: "first seen" is accurate to about a day.
       "2024-03-11",
       "2026-08-01",

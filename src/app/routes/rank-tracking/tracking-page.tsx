@@ -41,6 +41,7 @@ import {
 } from "../../components/tracking/format";
 import { TrackingMetrics } from "../../components/tracking/metric-cards";
 import { MoversPanel } from "../../components/tracking/movers-panel";
+import { RankOverviewChart } from "../../components/tracking/rank-overview-chart";
 import {
   useRemoveTrackedKeywords,
   useTrackedKeywords,
@@ -281,6 +282,21 @@ function ProjectTracking({
         />
       ) : (
         <>
+          {/*
+            The overview chart, full width above everything else — the shape of
+            the month before the numbers that make it up.
+
+            Only once there is something to plot: a project with no tracked
+            keywords has no snapshots by definition, and an empty chart above an
+            empty table is two ways of saying the same nothing.
+          */}
+          {rows.length > 0 ? (
+            <RankOverviewChart
+              workspaceId={workspaceId}
+              projectId={project.id}
+            />
+          ) : null}
+
           <TrackingMetrics rows={rows} loading={isLoading} />
 
           <MoversPanel rows={rows} />

@@ -27,6 +27,7 @@ import {
 } from "../../components/ui";
 import { downloadCsv } from "../../lib/csv";
 import { COUNTRY_CSV_HEADERS, countryCsvRows, csvFilename } from "./csv-rows";
+import type { CacheMode } from "./queries";
 import { useDomainCountries } from "./queries";
 import { TabShell } from "./tab-shell";
 import type { DomainSearch } from "./url-state";
@@ -41,14 +42,17 @@ export function CountriesTab({
   search,
   requested,
   onRequest,
+  cacheMode = "auto",
 }: {
   workspaceId: string | null;
   search: DomainSearch;
   /** True once the user has accepted the cost for *this* domain and language. */
   requested: boolean;
   onRequest: () => void;
+  /** `stale` on the first load after a history click — see queries.ts. */
+  cacheMode?: CacheMode;
 }) {
-  const query = useDomainCountries(workspaceId, search, requested);
+  const query = useDomainCountries(workspaceId, search, requested, cacheMode);
   const rows = query.data?.items ?? [];
 
   const columns = useMemo(

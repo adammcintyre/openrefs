@@ -42,6 +42,7 @@ import {
   parseFilterDraft,
   toFilterDraft,
 } from "./keyword-filters";
+import type { CacheMode } from "./queries";
 import { PAGE_SIZE, useDomainKeywords } from "./queries";
 import { LoadMoreBar, TabShell } from "./tab-shell";
 import type { DomainSearch } from "./url-state";
@@ -55,6 +56,7 @@ export function KeywordsTab({
   onPaidChange,
   filters,
   onFiltersChange,
+  cacheMode = "auto",
 }: {
   workspaceId: string | null;
   search: DomainSearch;
@@ -62,6 +64,8 @@ export function KeywordsTab({
   onPaidChange: (paid: boolean) => void;
   filters: KeywordFilters;
   onFiltersChange: (filters: KeywordFilters) => void;
+  /** `stale` on the first load after a history click — see queries.ts. */
+  cacheMode?: CacheMode;
 }) {
   const [draft, setDraft] = useState<FilterDraft>(() => toFilterDraft(filters));
   const [serpKeyword, setSerpKeyword] = useState<string | null>(null);
@@ -70,6 +74,7 @@ export function KeywordsTab({
     paid,
     filters,
     enabled: true,
+    cacheMode,
   });
 
   const rows = useMemo(

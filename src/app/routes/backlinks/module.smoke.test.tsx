@@ -252,8 +252,10 @@ function seededClient(): QueryClient {
   client.setQueryData(["workspaces"], WORKSPACES);
   client.setQueryData(["backlinks", "summary", WORKSPACE_ID, TARGET], SUMMARY);
   client.setQueryData(["backlinks", "history", WORKSPACE_ID, TARGET], HISTORY);
+  // The sort sits in the key between the mode and the filters: it is the
+  // provider's own `order_by`, so each order is a separate purchase.
   client.setQueryData(
-    ["backlinks", "list", WORKSPACE_ID, TARGET, "one_per_domain", {}],
+    ["backlinks", "list", WORKSPACE_ID, TARGET, "one_per_domain", "domain_score", {}],
     { pages: [LIST], pageParams: [0] },
   );
   client.setQueryData(["backlinks", "referring", WORKSPACE_ID, TARGET], {
@@ -361,10 +363,40 @@ describe("Backlinks tab", () => {
     expect(html).toContain("bills a call");
   });
 
-  it("offers the three filters", () => {
+  it("offers the quality filters", () => {
     expect(html).toContain("Min Domain Score");
     expect(html).toContain("Anchor contains");
     expect(html).toContain("Dofollow links only");
+    expect(html).toContain("Hide likely spam");
+  });
+
+  /** The feedback this pass came from: spam first, authority missing. */
+  it("shows the provider's spam score and the link type per row", () => {
+    expect(html).toContain(">Spam<");
+    expect(html).toContain(">Type<");
+    // The first fixture row: spam 3, an ordinary text link.
+    expect(html).toContain(">3<");
+    expect(html).toContain(">anchor<");
+  });
+
+  it("offers every sort order, in our vocabulary", () => {
+    expect(html).toContain("Sort backlinks by");
+    expect(html).toContain('value="domain_score"');
+    expect(html).toContain('value="page_score"');
+    expect(html).toContain('value="newest"');
+    expect(html).toContain('value="oldest"');
+    expect(html).toContain(">Domain Score<");
+    expect(html).toContain(">Page Score<");
+  });
+
+  it("says out loud that sorting is a fresh provider query", () => {
+    expect(html).toContain("Grouping and sorting both happen at DataForSEO");
+  });
+
+  /** The sort is part of the report's identity, so it rides in the URL. */
+  it("keeps a non-default sort selected from the URL", () => {
+    const newest = render(`/app/backlinks?target=${TARGET}&sort=newest`);
+    expect(newest).toContain('<option value="newest" selected="">Newest');
   });
 
   it("counts what is loaded against the total", () => {
@@ -398,6 +430,19 @@ describe("Referring domains tab", () => {
   it("presents the documented count asymmetry instead of hiding it", () => {
     expect(html).toContain("2 of about 1 rows loaded");
     expect(html).toContain("Subdomains are listed separately");
+  });
+
+  /**
+   * Authority and spam side by side: a high Domain Score with a high spam score
+   * is exactly the row worth spotting, and either number alone hides it.
+   */
+  it("scores each domain for spam as well as authority", () => {
+    expect(html).toContain(">Spam<");
+    // blog.example.org: Domain Score 61, spam 3.
+    expect(html).toContain(">61<");
+    expect(html).toContain(">3<");
+    // shop.example.org reports neither — an em dash, never a zero.
+    expect(html).toContain("did not report a spam score");
   });
 });
 

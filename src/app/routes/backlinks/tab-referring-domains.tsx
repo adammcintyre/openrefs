@@ -13,7 +13,7 @@ import { Globe } from "lucide-react";
 import { useMemo } from "react";
 
 import type { ReferringDomainRow } from "../../../shared/backlinks";
-import { ScoreBadge } from "../../components/backlinks/badges";
+import { ScoreBadge, SpamBadge } from "../../components/backlinks/badges";
 import {
   dofollowTitle,
   formatDofollow,
@@ -101,6 +101,18 @@ export function ReferringDomainsTab({
         cell: (info) => (
           <span className="tabular-nums">{formatCount(info.getValue())}</span>
         ),
+      }),
+      /*
+       * The provider's spam estimate for the linking domain, beside our own
+       * authority score rather than instead of it: a high Domain Score with a
+       * high spam score is exactly the row worth spotting, and either number
+       * alone hides it.
+       */
+      col.accessor((row) => row.spamScore, {
+        id: "spamScore",
+        header: "Spam",
+        sortFn: "alphanumeric",
+        cell: (info) => <SpamBadge score={info.getValue()} />,
       }),
       col.accessor((row) => row.dofollow.dofollowRatio, {
         id: "dofollow",

@@ -10,6 +10,8 @@
  * - **Headers say whose number this is.** "Domain Score" in a backlinks export
  *   is the *linking* domain's score, not the searched target's — a column
  *   labelled just "score" is a misread waiting to happen three weeks later.
+ *   The spam column names DataForSEO for the same reason and one more: it runs
+ *   the opposite way to our scores (high is bad) and it is not our metric.
  *
  * The dofollow ratio is exported as a 0–1 fraction, not "62%": a percent sign
  * turns the column into text in every spreadsheet application.
@@ -32,6 +34,7 @@ export const BACKLINK_CSV_HEADERS = [
   "Target URL",
   "Dofollow",
   "Link type",
+  "Spam score (DataForSEO)",
   "First seen",
   "Last seen",
   "Links from this domain",
@@ -51,6 +54,7 @@ export function backlinkCsvRows(
     // Blank, not "false", when the provider did not say.
     row.dofollow === null ? null : String(row.dofollow),
     row.itemType,
+    row.spamScore,
     seenDate(row.firstSeen),
     seenDate(row.lastSeen),
     row.groupCount,
@@ -66,6 +70,7 @@ export const REFERRING_CSV_HEADERS = [
   "Dofollow pages",
   "Nofollow pages",
   "Dofollow ratio (0-1)",
+  "Spam score (DataForSEO)",
   "Broken backlinks",
   "First seen",
 ];
@@ -81,6 +86,7 @@ export function referringCsvRows(
     row.dofollow.dofollowPages,
     row.dofollow.nofollowPages,
     row.dofollow.dofollowRatio,
+    row.spamScore,
     row.brokenBacklinks,
     seenDate(row.firstSeen),
   ]);

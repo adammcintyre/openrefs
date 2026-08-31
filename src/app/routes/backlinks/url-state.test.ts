@@ -11,22 +11,24 @@ describe("readBacklinksSearch", () => {
     expect(
       readBacklinksSearch(
         new URLSearchParams(
-          "target=brandpacks.com&tab=anchors&mode=as_is&range=6m",
+          "target=brandpacks.com&tab=anchors&mode=as_is&sort=newest&range=6m",
         ),
       ),
     ).toEqual({
       target: "brandpacks.com",
       tab: "anchors",
       mode: "as_is",
+      sort: "newest",
       range: "6m",
     });
   });
 
-  it("defaults to the grouped backlinks tab over a year", () => {
+  it("defaults to the grouped backlinks tab, strongest first, over a year", () => {
     expect(readBacklinksSearch(new URLSearchParams())).toEqual({
       target: "",
       tab: "backlinks",
       mode: "one_per_domain",
+      sort: "domain_score",
       range: "1y",
     });
   });
@@ -35,12 +37,15 @@ describe("readBacklinksSearch", () => {
   it("falls back on every unrecognised value", () => {
     expect(
       readBacklinksSearch(
-        new URLSearchParams("target=brandpacks.com&tab=banana&mode=x&range=99y"),
+        new URLSearchParams(
+          "target=brandpacks.com&tab=banana&mode=x&sort=cheapest&range=99y",
+        ),
       ),
     ).toEqual({
       target: "brandpacks.com",
       tab: "backlinks",
       mode: "one_per_domain",
+      sort: "domain_score",
       range: "1y",
     });
   });
@@ -64,6 +69,7 @@ describe("readBacklinksSearch", () => {
     expect(Object.keys(search).sort()).toEqual([
       "mode",
       "range",
+      "sort",
       "tab",
       "target",
     ]);
@@ -77,6 +83,7 @@ describe("backlinksSearchParams", () => {
         target: "",
         tab: "anchors",
         mode: "as_is",
+        sort: "newest",
         range: "6m",
       }).toString(),
     ).toBe("");
@@ -88,6 +95,7 @@ describe("backlinksSearchParams", () => {
         target: "brandpacks.com",
         tab: "backlinks",
         mode: "one_per_domain",
+        sort: "domain_score",
         range: "1y",
       }).toString(),
     ).toBe("target=brandpacks.com");
@@ -98,6 +106,7 @@ describe("backlinksSearchParams", () => {
       target: "https://brandpacks.com/pricing",
       tab: "referring",
       mode: "as_is",
+      sort: "oldest",
       range: "all",
     } as const;
     expect(readBacklinksSearch(backlinksSearchParams(search))).toEqual(search);
@@ -105,7 +114,12 @@ describe("backlinksSearchParams", () => {
 });
 
 describe("isSearchable", () => {
-  const base = { tab: "backlinks", mode: "one_per_domain", range: "1y" } as const;
+  const base = {
+    tab: "backlinks",
+    mode: "one_per_domain",
+    sort: "domain_score",
+    range: "1y",
+  } as const;
 
   it("is true for a domain or an absolute URL", () => {
     expect(isSearchable({ ...base, target: "brandpacks.com" })).toBe(true);
