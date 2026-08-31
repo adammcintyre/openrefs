@@ -1,7 +1,4 @@
-/**
- * TEMPORARY — not committed. See the agent report: this brief allows exactly
- * one new file under src/app, so this render check is run and then deleted.
- */
+/** Render smoke for the public developers page. */
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";

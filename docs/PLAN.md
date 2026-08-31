@@ -55,4 +55,6 @@ Topic search via SERPs enriched with traffic estimates, Domain Score, referring 
 
 ## Phase 8 — Hosted polish
 
+**Status: 8a/8b (API+MCP), 8c (email+reset), 8e (docs) shipped 2026-08-31 (v0.8.0). 8d (Stripe) awaits operator keys + pricing sign-off.**
+
 Stripe ($10/m per workspace, unlimited members) behind config flag, SendGrid email (invites/resets), public API docs (OpenAPI) + MCP server endpoint for agents, self-host guide + Deploy-to-Cloudflare button, Google OAuth verification, marketing landing page, rotate all dev credentials.

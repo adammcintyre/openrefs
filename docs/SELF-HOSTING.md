@@ -180,16 +180,28 @@ these two variables at it. **Most self-hosters won't need this.** Leave both
 unset and calls go straight to DataForSEO, which is the default and is
 correct for local development.
 
-**Not yet available for self-hosters (or anyone): transactional email and
-billing.** `docs/PLAN.md` Phase 8 scopes an `EMAIL_PROVIDER` config (SendGrid
-or console-log fallback) for invite emails and password-reset, and a
-`BILLING_ENABLED` flag wrapping Stripe subscriptions. Neither has landed in
-this codebase yet — there is no email-sending code path at all today, and no
-Stripe integration. Concretely: invites are link-based only (copy the link
-from Settings → Members and send it yourself), and there is currently no
-self-service "forgot password" flow — if a user loses their password, nobody
-can reset it for them through the product yet. Nothing to configure for
-either; this section will grow once they ship.
+### Transactional email (invites, password reset) — optional
+
+Email works out of the box on the **console provider**: sends are logged to
+the Worker's output (never including the actual link — copy invite links from
+Settings → Members, and hand reset links over yourself if you run a tiny
+instance). Password reset is fully self-service at `/forgot` either way; the
+provider only changes how the link reaches the user.
+
+To send real email, in `wrangler.jsonc` set `EMAIL_PROVIDER` to `"sendgrid"`
+and `EMAIL_FROM` to a SendGrid-verified sender (or an address on an
+authenticated domain — unverified senders are refused with a 403 on every
+send), then:
+
+```bash
+npx wrangler secret put SENDGRID_API_KEY   # a key with only the Mail Send permission
+```
+
+Send failures are always non-fatal: an invite whose email fails still returns
+its copyable link, and `/forgot` always answers the same way regardless.
+
+**Still not available: billing.** The `BILLING_ENABLED` Stripe flag from
+`docs/PLAN.md` Phase 8 has not landed; self-hosting needs nothing from it.
 
 ## Updating
 

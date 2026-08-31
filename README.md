@@ -8,9 +8,10 @@ An open-source alternative to tools like Ahrefs. You bring a DataForSEO API
 key, OpenRefs turns it into a full SEO workbench, and you own both the data
 and the bill.
 
-**Status: v0.7.0, all nine modules live** — five ad-hoc research tools plus
-four project-scoped modules, listed below. Hosted-only polish (transactional
-email, billing) is still landing; self-hosting works today regardless.
+**Status: v0.8.0, all nine modules live** — five ad-hoc research tools plus
+four project-scoped modules, listed below, plus password reset and optional
+transactional email (console by default, SendGrid when configured). Billing
+for the hosted plan is the one piece still landing; self-hosting is complete.
 
 ## Philosophy
 
