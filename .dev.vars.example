@@ -51,6 +51,32 @@ GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
 
 # ---------------------------------------------------------------------------
+# Email (Phase 8c) — OPTIONAL.
+#
+# OpenRefs sends two kinds of mail, both best-effort: workspace invite links
+# and password-reset links. With no provider configured it runs on the
+# "console" provider, which logs one structured line per message (recipient and
+# subject only — never the body, because these bodies contain single-use links)
+# and sends nothing. Password reset still works in that mode; the operator just
+# has to hand the link over another way, and invites are copy-link anyway.
+#
+# EMAIL_PROVIDER and EMAIL_FROM are *vars*, and live in wrangler.jsonc for a
+# deployed build — they are repeated here only so local dev can differ. Set
+# EMAIL_PROVIDER=sendgrid locally to test a real send.
+#
+# The API key is a secret: in production set it with
+#   wrangler secret put SENDGRID_API_KEY
+# Create one at https://app.sendgrid.com/settings/api_keys with the single
+# "Mail Send" permission — a full-access key can read your contacts and rewrite
+# your account, and this app only ever calls POST /v3/mail/send.
+#
+# EMAIL_FROM must be a verified sender or an address on an authenticated domain
+# in that SendGrid account, or every send comes back 403.
+EMAIL_PROVIDER="console"
+EMAIL_FROM=""
+SENDGRID_API_KEY=""
+
+# ---------------------------------------------------------------------------
 # DataForSEO egress relay — OPTIONAL, for deployments whose outbound IPs are
 # throttled by DataForSEO (observed with Cloudflare Workers' shared egress).
 # Point at a copy of the tiny authenticated forwarder (see docs/BACKLOG.md
