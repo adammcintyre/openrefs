@@ -307,20 +307,24 @@ export function KeywordSearchView() {
             onChange={setDraftMarket}
           />
 
-          {/* The trail is a lookup once results are on screen, so it collapses
-              into a button here and opens in full on the landing screen. */}
-          {hasSearch ? (
-            <HistoryDisclosure
-              workspaceId={activeWorkspaceId}
-              onOpen={onOpenHistory}
-            />
-          ) : null}
-
           <Button type="submit" disabled={draftKeyword.trim() === ""}>
             <Search className="size-4" aria-hidden="true" />
             Search
           </Button>
         </form>
+
+        {/* The trail is a lookup once results are on screen, so it collapses
+            into a button here and opens in full on the landing screen. Below
+            the form rather than inside it: the disclosure expands, and a row of
+            form controls is the wrong thing to expand inside. */}
+        {hasSearch ? (
+          <div className="mt-4 border-t border-border pt-3">
+            <HistoryDisclosure
+              workspaceId={activeWorkspaceId}
+              onOpen={onOpenHistory}
+            />
+          </div>
+        ) : null}
       </Card>
 
       {tabs.tabs.length > 0 ? (

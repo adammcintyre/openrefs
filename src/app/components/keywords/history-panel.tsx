@@ -210,12 +210,14 @@ export function HistoryDisclosure({
   return (
     <div className="flex flex-col gap-2">
       <Button
-        variant="secondary"
+        size="sm"
+        variant="ghost"
+        className="self-start"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         title="Past searches in this workspace. Reopening one costs nothing."
       >
-        <History className="size-4" aria-hidden="true" />
+        <History className="size-3.5" aria-hidden="true" />
         History
       </Button>
 
