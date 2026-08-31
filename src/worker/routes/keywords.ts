@@ -25,6 +25,7 @@ import {
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
   withFreshness,
 } from "../lib/research";
 import { requireSession } from "../middleware/auth";
@@ -72,7 +73,7 @@ export const keywordSerpQuerySchema = keywordQuerySchema.extend(freshnessShape).
 keywords.get("/overview", async (c) => {
   const query = readQuery(c, withFreshness(keywordOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  const body = await keywordOverview(c.env, db, query);
+  const body = await keywordOverview(c.env, db, resolveFreshness(query));
 
   recordSearch(
     historyContext(c, db),
@@ -100,13 +101,13 @@ keywords.get("/overview", async (c) => {
 keywords.get("/ideas", async (c) => {
   const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordIdeas(c.env, db, query));
+  return c.json(await keywordIdeas(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/suggestions", async (c) => {
   const query = readQuery(c, withFreshness(keywordListQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordSuggestions(c.env, db, query));
+  return c.json(await keywordSuggestions(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/related", async (c) => {
@@ -124,13 +125,13 @@ keywords.get("/related", async (c) => {
     ),
   );
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordRelated(c.env, db, query));
+  return c.json(await keywordRelated(c.env, db, resolveFreshness(query)));
 });
 
 keywords.get("/serp", async (c) => {
   const query = readQuery(c, withFreshness(keywordSerpQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await keywordSerp(c.env, db, query));
+  return c.json(await keywordSerp(c.env, db, resolveFreshness(query)));
 });
 
 export default keywords;

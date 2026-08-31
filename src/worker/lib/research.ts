@@ -126,6 +126,22 @@ export function toFreshness(query: {
   return { fresh: query.fresh, allowStale: query.stale };
 }
 
+/**
+ * A validated query, ready to hand to a service.
+ *
+ * The services take `allowStale`; a query string carries `stale`. Both fields
+ * are optional, so TypeScript is perfectly happy to let a raw query through
+ * with the wrong one set — and the result is a `?stale=true` that validates,
+ * routes, and then quietly bills, which is the one bug this whole feature
+ * exists to prevent. Passing every query through here is what stops that
+ * being possible to forget at a call site.
+ */
+export function resolveFreshness<T extends { fresh?: boolean; stale?: boolean }>(
+  query: T,
+): T & Freshness {
+  return { ...query, ...toFreshness(query) };
+}
+
 /** The market half of every research query. */
 export const marketQuerySchema = z.object({
   workspace: workspaceParam,

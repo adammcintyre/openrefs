@@ -15,10 +15,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiKeys, type Db } from "../../db";
 import { createApp } from "../app";
+import type { DataForSeoRequest, DataForSeoResponse } from "../dataforseo/client";
 import { API_PREFIX } from "./index";
 
 const WS = "ws-a";
 const KEY = "orf_test-key";
+
+/** Every request the routes handed the DataForSEO client. */
+let requests: DataForSeoRequest<unknown>[] = [];
 
 /** Answers the session's `api_keys` lookup and nothing else. */
 function fakeDb(): Db {
@@ -38,6 +42,41 @@ function fakeDb(): Db {
 vi.mock("../../db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../db")>();
   return { ...actual, getDb: () => fakeDb() };
+});
+
+/*
+ * The real wrappers over a recording client. What the wrappers then do with the
+ * empty result — most will fail to parse it — does not matter here: the request
+ * has already been captured, and the request is the whole subject.
+ */
+vi.mock("../dataforseo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../dataforseo")>();
+  return {
+    ...actual,
+    createDataForSeoApi: () =>
+      Promise.resolve(
+        actual.createDataForSeoApiFromClient({
+          async request<TResult>(
+            req: DataForSeoRequest<unknown>,
+          ): Promise<DataForSeoResponse<TResult>> {
+            requests.push(req);
+            return {
+              results: [{} as TResult],
+              tasks: [],
+              costUsd: 0,
+              cached: true,
+              stale: false,
+              fetchedAt: Date.now(),
+              statusCode: 20000,
+              statusMessage: "Ok.",
+            };
+          },
+          async balance() {
+            return { balanceUsd: 0 };
+          },
+        }),
+      ),
+  };
 });
 
 const app = createApp();
@@ -73,6 +112,7 @@ const RESEARCH_GETS = [
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  requests = [];
 });
 
 describe("fresh + stale together", () => {
@@ -98,12 +138,71 @@ describe("fresh + stale together", () => {
 
 describe("either flag on its own", () => {
   it.each(["fresh", "stale"])("is not a validation failure (%s)", async (flag) => {
-    // These get further and fail for other reasons — no stored DataForSEO
-    // credentials on this fake deployment — which is exactly the point: the
-    // freshness rule must not have grown teeth beyond the contradictory pair.
+    // The freshness rule must not have grown teeth beyond the contradictory
+    // pair: one flag is an ordinary, valid request.
     const res = await get(
       `/keywords/overview?keyword=seo&location=2826&language=en&workspace=${WS}&${flag}=true`,
     );
     expect(res.status).not.toBe(422);
+  });
+});
+
+/**
+ * `?stale=true` must actually reach the DataForSEO client as `allowStale`.
+ *
+ * This is the test that earns its keep, and it was written because the code it
+ * covers was wrong: the query parameter is `stale`, the client option is
+ * `allowStale`, and both are optional — so TypeScript will happily let a
+ * handler pass its raw query through with neither field set. The result is a
+ * `?stale=true` that validates, routes, returns data, and **bills**. Silent,
+ * and invisible until the invoice. Nothing short of watching the request the
+ * client receives catches it.
+ */
+describe("stale reaches the provider client as allowStale", () => {
+  const CASES: [string, string][] = [
+    ["/keywords/overview", "keyword=seo&location=2826&language=en"],
+    ["/keywords/ideas", "keyword=seo&location=2826&language=en"],
+    ["/keywords/suggestions", "keyword=seo&location=2826&language=en"],
+    ["/keywords/related", "keyword=seo&location=2826&language=en"],
+    ["/keywords/serp", "keyword=seo&location=2826&language=en"],
+    ["/domains/overview", "domain=example.com&location=2826&language=en"],
+    ["/domains/history", "domain=example.com&location=2826&language=en"],
+    ["/domains/keywords", "domain=example.com&location=2826&language=en"],
+    ["/domains/pages", "domain=example.com&location=2826&language=en"],
+    ["/domains/competitors", "domain=example.com&location=2826&language=en"],
+    ["/domains/countries", "domain=example.com&language=en"],
+    ["/gap/keywords", "target=me.com&competitors=rival.com&location=2826&language=en"],
+    [
+      "/gap/keywords/export.csv",
+      "target=me.com&competitors=rival.com&location=2826&language=en",
+    ],
+    ["/gap/pages", "pages=https://a.com/x&location=2826&language=en"],
+  ];
+
+  it.each(CASES)("%s", async (path, query) => {
+    await get(`${path}?${query}&workspace=${WS}&stale=true`);
+
+    expect(requests.length, "no provider request was made").toBeGreaterThan(0);
+    for (const req of requests) {
+      expect(req.allowStale, `${path} dropped stale on the way to the client`).toBe(
+        true,
+      );
+      // And the opposite instruction is not smuggled along with it.
+      expect(req.fresh).not.toBe(true);
+    }
+  });
+
+  it("passes fresh through as fresh, not as permission to serve stale", async () => {
+    await get(
+      `/keywords/overview?keyword=seo&location=2826&language=en&workspace=${WS}&fresh=true`,
+    );
+    expect(requests[0]?.fresh).toBe(true);
+    expect(requests[0]?.allowStale).not.toBe(true);
+  });
+
+  it("asks for neither when the caller asked for neither", async () => {
+    await get(`/keywords/overview?keyword=seo&location=2826&language=en&workspace=${WS}`);
+    expect(requests[0]?.fresh).toBeUndefined();
+    expect(requests[0]?.allowStale).toBeUndefined();
   });
 });

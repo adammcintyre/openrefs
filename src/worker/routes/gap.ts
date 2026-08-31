@@ -36,6 +36,7 @@ import {
   normalizeDomain,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
   toFreshness,
   withFreshness,
 } from "../lib/research";
@@ -165,7 +166,7 @@ const gapPagesQuerySchema = marketQuerySchema
 gap.get("/keywords", async (c) => {
   const query = readQuery(c, withFreshness(gapKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  const body = await gapKeywords(c.env, db, query);
+  const body = await gapKeywords(c.env, db, resolveFreshness(query));
 
   recordSearch(
     historyContext(c, db),
@@ -206,7 +207,12 @@ gap.get("/keywords/export.csv", async (c) => {
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
   // The same fan-out `/gap/keywords` runs, one level below the response
   // envelope: the rows are all this needs, and the page size is its own.
-  const result = await fetchGapKeywords(c.env, db, query, GAP_CSV_MAX_ROWS);
+  const result = await fetchGapKeywords(
+    c.env,
+    db,
+    resolveFreshness(query),
+    GAP_CSV_MAX_ROWS,
+  );
 
   const csv = toCsv(
     gapCsvHeader(result.competitors),

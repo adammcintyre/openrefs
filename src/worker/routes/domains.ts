@@ -32,6 +32,7 @@ import {
   marketQuerySchema,
   pagingQuerySchema,
   rangeQuerySchema,
+  resolveFreshness,
   toFreshness,
   withFreshness,
 } from "../lib/research";
@@ -121,7 +122,7 @@ export const domainKeywordsQuerySchema = listQuerySchema
 domains.get("/overview", async (c) => {
   const query = readQuery(c, withFreshness(domainOverviewQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  const body = await domainOverview(c.env, db, query);
+  const body = await domainOverview(c.env, db, resolveFreshness(query));
 
   recordSearch(
     historyContext(c, db),
@@ -199,7 +200,7 @@ domains.get("/history", async (c) => {
 domains.get("/keywords", async (c) => {
   const query = readQuery(c, withFreshness(domainKeywordsQuerySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), query.workspace);
-  return c.json(await domainKeywords(c.env, db, query));
+  return c.json(await domainKeywords(c.env, db, resolveFreshness(query)));
 });
 
 domains.get("/pages", async (c) => {
