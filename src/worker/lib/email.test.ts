@@ -52,7 +52,9 @@ afterEach(() => {
 
 /** Everything console.log saw, joined — for "this string appears nowhere". */
 function loggedText(): string {
-  return logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+  return logSpy.mock.calls
+    .map((call: unknown[]) => String(call[0]))
+    .join("\n");
 }
 
 describe("emailProvider", () => {
