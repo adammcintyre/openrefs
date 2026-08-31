@@ -185,9 +185,13 @@ gap.get("/keywords", async (c) => {
       // search and must not be a second trail row.
     },
     {
-      // Before the mode filter, which is what makes the number comparable
-      // between a row saved in `missing` and the same search seen in `all`.
-      keywordCount: (body.itemsCount ?? body.items.length) + body.filteredOut,
+      // Upstream's count for the whole unfiltered query — before the mode
+      // filter and independent of paging, which is what makes the number
+      // comparable between a row saved in `missing` and the same search seen
+      // in `all`. Null when upstream cannot say (merged multi-pair queries):
+      // a missing count reads better in the trail than one page's worth
+      // masquerading as the total.
+      keywordCount: body.totalCount,
       competitorCount: body.competitors.length,
     },
   );
