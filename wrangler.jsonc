@@ -21,7 +21,28 @@
     // `wrangler secret put GOOGLE_CLIENT_SECRET` (locally: .dev.vars).
     // A client id is public by design (it ships in every auth URL), so it lives
     // here in the clear where self-hosters can see what to replace.
-    "GOOGLE_CLIENT_ID": ""
+    "GOOGLE_CLIENT_ID": "",
+
+    // Outbound email (docs/specs/PHASE8.md §8c). "console" is the default and
+    // is not a broken state: it writes a structured log line (recipient and
+    // subject, never the body) and nothing leaves the Worker, which is the
+    // right behaviour for a self-host that has no mail provider. Invite links
+    // are copied by hand in that mode, which is the primary flow anyway.
+    //
+    // Set to "sendgrid" to actually send. That needs BOTH the EMAIL_FROM
+    // address below and the SENDGRID_API_KEY *secret*
+    // (`wrangler secret put SENDGRID_API_KEY`; locally .dev.vars) — with
+    // either missing, sends fail softly and the features carry on without
+    // mail. Anything unrecognised here reads as "console".
+    "EMAIL_PROVIDER": "console",
+
+    // The From: address, e.g. "OpenRefs <no-reply@example.com>" — plain
+    // "no-reply@example.com" is what SendGrid's API wants. It must be a
+    // verified sender or an address on an authenticated domain in the SendGrid
+    // account, or SendGrid answers 403. Empty is correct while EMAIL_PROVIDER
+    // is "console"; it is not a secret, so it lives here rather than in
+    // .dev.vars.
+    "EMAIL_FROM": ""
   },
 
   // The React SPA is served from the same Worker as static assets.

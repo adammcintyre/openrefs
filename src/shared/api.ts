@@ -46,6 +46,15 @@ export const ERROR_STATUS = {
   /** Invite token is unknown, already redeemed, or past `expires_at`. */
   invite_invalid: 410,
 
+  /* Password reset (Phase 8c). */
+  /**
+   * Reset token is unknown, already used, or past `expires_at` — deliberately
+   * one code for all three, so a caller holding a dead link learns only that
+   * it is dead. 410 rather than 404: the link was real, and its own page can
+   * say "this link has expired" and offer a fresh one.
+   */
+  reset_invalid: 410,
+
   /* Search Console (Phase 5). */
   /**
    * No `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` on this deployment, so the

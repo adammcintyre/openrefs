@@ -44,6 +44,31 @@ export const deleteAccountSchema = z.object({
 });
 export type DeleteAccountBody = z.infer<typeof deleteAccountSchema>;
 
+/** `POST /api/v1/auth/forgot` — always answered 202, whoever the address is. */
+export const forgotPasswordSchema = z.object({ email: emailSchema });
+export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>;
+
+/**
+ * `POST /api/v1/auth/reset`. The new password goes through `passwordSchema`,
+ * the same floor registration enforces: a reset is a fresh choice, so unlike
+ * login there is no old-account exemption to preserve.
+ *
+ * The token is bounded rather than pattern-matched — `randomToken()` produces
+ * base64url, but the only thing that decides a token's fate is whether its
+ * SHA-256 is in the table, and a length cap is all that is needed to keep a
+ * garbage body from reaching the hash.
+ */
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1).max(500),
+  password: passwordSchema,
+});
+export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>;
+
+/** `POST /api/v1/auth/reset` on success. The user is *not* signed in. */
+export interface ResetPasswordResponse {
+  ok: true;
+}
+
 /** A workspace as it appears in `GET /auth/me`. */
 export interface MeWorkspace {
   id: string;

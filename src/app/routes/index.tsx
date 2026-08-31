@@ -10,6 +10,7 @@ import { BacklinksModule } from "./backlinks/module";
 import { ContentDiscoveryModule } from "./content-discovery/module";
 import { SearchConsoleModule } from "./search-console/module";
 import { DomainOverviewModule } from "./domain-overview/module";
+import { ForgotPassword } from "./forgot";
 import { GapAnalysisModule } from "./gap-analysis/module";
 import { InviteAccept } from "./invite";
 import { KeywordResearchModule } from "./keyword-research/module";
@@ -21,6 +22,7 @@ import { Privacy } from "./privacy";
 import { SiteAuditModule } from "./site-audit/module";
 import { NAV_ITEMS } from "./nav";
 import { Register } from "./register";
+import { ResetPassword } from "./reset";
 import { ApiKeysSettings } from "./settings/api-keys";
 import { DangerZoneSettings } from "./settings/danger-zone";
 import { DataProviderSettings } from "./settings/data-provider";
@@ -90,6 +92,9 @@ export function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/invite/:token" element={<InviteAccept />} />
+      {/* Public by necessity: someone who cannot sign in is who needs them. */}
+      <Route path="/forgot" element={<ForgotPassword />} />
+      <Route path="/reset/:token" element={<ResetPassword />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/developers" element={<DevelopersPage />} />
 
