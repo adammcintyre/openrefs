@@ -34,6 +34,10 @@ const MOUNT_PROBES: Record<string, string> = {
   "/dashboard": "/dashboard",
   "/gsc": "/gsc/status",
   "/meta": "/meta/locations",
+  "/openapi.json": "/openapi.json",
+  // A GET here is 405, not 404 — the MCP transport is POST-only. That still
+  // proves the module is mounted, which is all this probe asks.
+  "/mcp": "/mcp",
   "/dev": "/dev/dfs-smoke",
 };
 

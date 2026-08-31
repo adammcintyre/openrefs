@@ -33,7 +33,14 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     // Everything under /api/* must reach the Worker, never the asset server.
-    "run_worker_first": ["/api/*"]
+    //
+    // `/mcp` is listed for the same reason and is not optional: it is the bare
+    // alias for POST /api/v1/mcp (see src/worker/app.ts), and without this
+    // entry `not_found_handling: single-page-application` would answer an MCP
+    // client's POST with index.html and a 200 — the worst possible failure,
+    // because it looks like success until the client tries to parse HTML as
+    // JSON-RPC.
+    "run_worker_first": ["/api/*", "/mcp"]
   },
 
   "d1_databases": [

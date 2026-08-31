@@ -14,7 +14,9 @@ import gap from "./gap";
 import gsc from "./gsc";
 import health from "./health";
 import keywords from "./keywords";
+import mcp from "./mcp";
 import meta from "./meta";
+import openapi from "./openapi";
 import projects from "./projects";
 import usage from "./usage";
 import workspaces from "./workspaces";
@@ -68,6 +70,11 @@ export const routeModules: RouteModule[] = [
   // reports `configured: false` and every other route here answers 409.
   { path: "/gsc", router: gsc },
   { path: "/meta", router: meta },
+  // The public API description. No auth: it documents how to authenticate.
+  { path: "/openapi.json", router: openapi },
+  // Model Context Protocol, for agent clients. Also mounted at a bare `/mcp`
+  // by createApp — see the note there.
+  { path: "/mcp", router: mcp },
   // Every route in this module 404s unless APP_ENV === "development".
   { path: "/dev", router: dev },
 ];

@@ -7,6 +7,7 @@ import { loadSession } from "./middleware/auth";
 import { requestLogger } from "./middleware/logger";
 import { requestId } from "./middleware/request-id";
 import { registerRoutes } from "./routes";
+import mcp from "./routes/mcp";
 import type { AppEnv } from "./types";
 
 /**
@@ -21,6 +22,22 @@ export function createApp(): Hono<AppEnv> {
   app.use("*", loadSession);
 
   registerRoutes(app);
+
+  /*
+   * The MCP endpoint again, at a bare `/mcp`.
+   *
+   * It is already mounted at `/api/v1/mcp` by the registry above, and that is
+   * the canonical path. This alias exists because MCP clients are configured
+   * with a single URL typed by a human into a JSON config file, and every
+   * server in the ecosystem publishes that URL as `https://host/mcp`. Making
+   * people discover a versioned path buys nothing: the protocol carries its own
+   * version in every message, so this endpoint has no use for ours.
+   *
+   * Note that `wrangler.jsonc` has to list `/mcp` in `run_worker_first`, or the
+   * asset server answers it with the SPA's index.html before the Worker ever
+   * sees it.
+   */
+  app.route("/mcp", mcp);
 
   // Anything reaching the Worker that isn't a route is an API miss: static
   // assets are served ahead of us by the assets binding.
