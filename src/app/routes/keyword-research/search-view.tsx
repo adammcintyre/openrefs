@@ -35,16 +35,11 @@ import { KeywordOverviewStrip } from "./overview-strip";
 import { KeywordTabPanel } from "./keyword-tab-panel";
 import {
   KEYWORD_TABS,
+  TAB_LABELS,
   buildSearchParams,
   parseSearchParams,
 } from "./search-params";
 import type { KeywordSearchState, KeywordTabId } from "./search-params";
-
-const TAB_LABELS: Record<KeywordTabId, string> = {
-  ideas: "Ideas",
-  suggestions: "Suggestions",
-  related: "Related",
-};
 
 export function KeywordSearchView() {
   const { activeWorkspaceId } = useActiveWorkspace();

@@ -39,12 +39,18 @@ import { Button, EmptyState } from "../../components/ui";
 import { downloadCsv } from "../../lib/csv";
 import type { KeywordRow } from "../../../shared/keywords";
 import type { KeywordTabId } from "./search-params";
+import { TAB_LABELS } from "./search-params";
 
-const TAB_LABELS: Record<KeywordTabId, string> = {
-  ideas: "Ideas",
-  suggestions: "Suggestions",
-  related: "Related",
-};
+/**
+ * What Ideas actually is, said once and quietly.
+ *
+ * It is the honest answer to the complaint that demoted the tab: the endpoint
+ * expands the seed's *category*, so a term here can share a topic without
+ * sharing much else. A muted line rather than a banner — a caveat that shouts
+ * gets dismissed, and this one is worth reading once.
+ */
+const IDEAS_NOTE =
+  "Broad matches from the seed's category — often loosely related. Suggestions and Related stay closer to the phrase.";
 
 const CSV_HEADERS = ["keyword", "search_volume", "difficulty", "cpc_usd", "intent"];
 
@@ -159,6 +165,10 @@ export function KeywordTabPanel({
 
   return (
     <div className="flex flex-col gap-4">
+      {tab === "ideas" ? (
+        <p className="text-xs text-muted-foreground">{IDEAS_NOTE}</p>
+      ) : null}
+
       <KeywordFilterRow
         filters={filters}
         onChange={setFilters}

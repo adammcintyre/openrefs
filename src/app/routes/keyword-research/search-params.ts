@@ -18,12 +18,33 @@ import {
   isLocationCode,
 } from "../../components/keywords/market";
 
-/** The three keyword tabs, in display order. */
-export const KEYWORD_TABS = ["ideas", "suggestions", "related"] as const;
+/**
+ * The three keyword tabs, in display order.
+ *
+ * Suggestions leads, Ideas trails. That order is feedback from real use rather
+ * than taxonomy: Ideas is DataForSEO's category expansion, so it answers a
+ * seed with terms from the same broad topic — often only loosely related to the
+ * phrase — while Suggestions and Related stay close to what was typed. Leading
+ * with the loosest of the three made the module look worse than it is. Tabs
+ * fetch lazily (`Tabs` mounts the active panel alone), so demoting Ideas costs
+ * nothing until someone opens it, and costs them nothing if they never do.
+ */
+export const KEYWORD_TABS = ["suggestions", "related", "ideas"] as const;
 
 export type KeywordTabId = (typeof KEYWORD_TABS)[number];
 
-export const DEFAULT_TAB: KeywordTabId = "ideas";
+export const DEFAULT_TAB: KeywordTabId = "suggestions";
+
+/**
+ * Display names for the tabs. One source: the strip, the panel headings, the
+ * table captions and the error toasts all read from here, so a rename lands
+ * everywhere or nowhere.
+ */
+export const TAB_LABELS: Record<KeywordTabId, string> = {
+  suggestions: "Suggestions",
+  related: "Related",
+  ideas: "Ideas",
+};
 
 /** Query-string keys. Named once so the parser and builder cannot drift. */
 export const SEARCH_PARAM_KEYS = {
