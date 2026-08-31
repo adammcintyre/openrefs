@@ -6,6 +6,7 @@ import audits from "./audits";
 import auth from "./auth";
 import backlinks from "./backlinks";
 import collections from "./collections";
+import content from "./content";
 import dashboard from "./dashboard";
 import dev from "./dev";
 import domains from "./domains";
@@ -50,6 +51,7 @@ export const routeModules: RouteModule[] = [
   { path: "/backlinks", router: backlinks },
   { path: "/gap", router: gap },
   { path: "/collections", router: collections },
+  { path: "/content", router: content },
   { path: "/projects", router: projects },
   /*
    * AI Visibility mounts on the same prefix rather than as a sub-router of

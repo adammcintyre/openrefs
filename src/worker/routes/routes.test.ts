@@ -27,6 +27,7 @@ const MOUNT_PROBES: Record<string, string> = {
   "/backlinks": "/backlinks/summary",
   "/gap": "/gap/keywords",
   "/collections": "/collections",
+  "/content": "/content/discover",
   "/projects": "/projects",
   "/projects/ai": "/projects/abc/ai/prompts",
   "/audits": "/audits/abc",
@@ -127,6 +128,12 @@ describe("session guard", () => {
     ["POST", "/collections/abc/keywords"],
     ["DELETE", "/collections/abc/keywords"],
     ["GET", "/collections/abc/export.csv"],
+    // Phase 7. Content Discovery composes a dozen paid SERPs behind one GET,
+    // and the word count is priced per URL — so, like every other spending
+    // route, the 401 lands before validation and an anonymous caller never
+    // learns whether their query was well-formed.
+    ["GET", "/content/discover"],
+    ["POST", "/content/wordcount"],
     // Phase 3. Projects are pure D1, but they are tenant data, and the two
     // keyword routes enqueue work that spends money — so the 401 lands before
     // validation here for the same reason as everywhere above.
