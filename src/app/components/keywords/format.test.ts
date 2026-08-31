@@ -9,6 +9,7 @@ import {
   formatIntent,
   formatMonthLabel,
   formatPercent,
+  formatRelativeTime,
   formatSerpFeature,
   formatVolume,
   intentVariant,
@@ -216,5 +217,70 @@ describe("formatSerpFeature", () => {
 
   it("passes an unknown feature through the generic rule", () => {
     expect(formatSerpFeature("some_new_feature")).toBe("Some new feature");
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const NOW = Date.parse("2026-08-31T12:00:00.000Z");
+  const ago = (ms: number) => new Date(NOW - ms).toISOString();
+
+  const SECOND = 1000;
+  const MINUTE = 60 * SECOND;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+
+  it("collapses the last minute to 'just now'", () => {
+    expect(formatRelativeTime(ago(0), NOW)).toBe("just now");
+    expect(formatRelativeTime(ago(59 * SECOND), NOW)).toBe("just now");
+  });
+
+  it.each([
+    [MINUTE, "1 minute ago"],
+    [90 * SECOND, "1 minute ago"],
+    [5 * MINUTE, "5 minutes ago"],
+    [HOUR, "1 hour ago"],
+    [3 * HOUR, "3 hours ago"],
+    [DAY, "1 day ago"],
+    [3 * DAY, "3 days ago"],
+    [8 * DAY, "1 week ago"],
+    [40 * DAY, "1 month ago"],
+    [200 * DAY, "6 months ago"],
+  ])("reads %d ms ago as %s", (elapsed, expected) => {
+    expect(formatRelativeTime(ago(elapsed), NOW)).toBe(expected);
+  });
+
+  /*
+   * A 400-day-old payload reading "13 months ago" is technically true and
+   * useless; the largest unit that still counts at least one is the readable
+   * one.
+   */
+  it("promotes to the largest unit that still counts", () => {
+    expect(formatRelativeTime(ago(400 * DAY), NOW)).toBe("1 year ago");
+  });
+
+  /*
+   * `fetchedAt` is optional and nullable on ResultMeta — one endpoint reports
+   * the provider's own crawl time, which the provider can omit. Null here means
+   * the caller omits the chip rather than shows a guess.
+   */
+  it.each<[value: string | null | undefined, why: string]>([
+    [null, "null"],
+    [undefined, "undefined"],
+    ["", "an empty string"],
+    ["not a date", "unparseable text"],
+  ])("returns null for %s (%s)", (value) => {
+    expect(formatRelativeTime(value, NOW)).toBeNull();
+  });
+
+  /*
+   * The Worker's clock and the browser's can disagree by a second or two, and
+   * "-3 seconds ago" is worse than nothing. Small skew reads as "just now"; a
+   * genuinely future timestamp is refused.
+   */
+  it("absorbs small clock skew and refuses a real future date", () => {
+    expect(formatRelativeTime(new Date(NOW + 5 * SECOND).toISOString(), NOW)).toBe(
+      "just now",
+    );
+    expect(formatRelativeTime(new Date(NOW + DAY).toISOString(), NOW)).toBeNull();
   });
 });

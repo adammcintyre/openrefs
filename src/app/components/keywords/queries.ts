@@ -108,12 +108,12 @@ function queryString(parts: Record<string, string | number | boolean | undefined
 
 /** The market half every keyword endpoint shares. */
 function marketParams(
-  workspaceId: string,
+  workspaceId: string | null,
   keyword: string,
   market: MarketSelection,
 ) {
   return {
-    workspace: workspaceId,
+    workspace: workspaceId ?? "",
     keyword,
     location: market.locationCode,
     language: market.languageCode,
@@ -131,6 +131,67 @@ function marketParams(
  */
 function cacheParams(mode: KeywordCacheMode): { stale?: true } {
   return mode === "stale" ? { stale: true } : {};
+}
+
+/**
+ * Every keyword request the module makes, as a path.
+ *
+ * Exported and pure so the billing invariants are testable as strings rather
+ * than inferred from component behaviour: which requests carry `fresh=true`,
+ * which carry `stale=true`, and — the one that is easy to get wrong — that
+ * mounting, switching tabs and reopening from history carry neither.
+ */
+export function keywordOverviewPath(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  cacheMode: KeywordCacheMode = "auto",
+): string {
+  return `/keywords/overview?${queryString({
+    ...marketParams(workspaceId, keyword, market),
+    ...cacheParams(cacheMode),
+  })}`;
+}
+
+export function keywordListPath(
+  workspaceId: string | null,
+  tab: KeywordTabId,
+  keyword: string,
+  market: MarketSelection,
+  offset: number,
+  cacheMode: KeywordCacheMode = "auto",
+): string {
+  return `/keywords/${tab}?${queryString({
+    ...marketParams(workspaceId, keyword, market),
+    limit: PAGE_SIZE,
+    offset,
+    ...cacheParams(cacheMode),
+  })}`;
+}
+
+/**
+ * The two requests one Refresh press makes, and the only two paths in the
+ * module that carry `fresh=true`.
+ *
+ * The list is pinned to `offset: 0`: refreshing means "the first page again,
+ * live", never re-buying every page the user had scrolled through.
+ */
+export function keywordRefreshPaths(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+): { overview: string; list: string } {
+  const shared = marketParams(workspaceId, keyword, market);
+  return {
+    overview: `/keywords/overview?${queryString({ ...shared, fresh: true })}`,
+    list: `/keywords/${tab}?${queryString({
+      ...shared,
+      limit: PAGE_SIZE,
+      offset: 0,
+      fresh: true,
+    })}`,
+  };
 }
 
 /**
@@ -179,10 +240,7 @@ export function useKeywordOverview(
     queryKey: keywordKeys.overview(workspaceId ?? "", keyword, market),
     queryFn: () =>
       api.get<KeywordOverviewResponse>(
-        `/keywords/overview?${queryString({
-          ...marketParams(workspaceId ?? "", keyword, market),
-          ...cacheParams(cacheMode),
-        })}`,
+        keywordOverviewPath(workspaceId, keyword, market, cacheMode),
       ),
     enabled: workspaceId !== null && keyword !== "",
     ...PAID_QUERY_OPTIONS,
@@ -208,12 +266,7 @@ export function useKeywordList(
     queryKey: keywordKeys.list(workspaceId ?? "", tab, keyword, market),
     queryFn: ({ pageParam }) =>
       api.get<KeywordListResponse>(
-        `/keywords/${tab}?${queryString({
-          ...marketParams(workspaceId ?? "", keyword, market),
-          limit: PAGE_SIZE,
-          offset: pageParam,
-          ...cacheParams(cacheMode),
-        })}`,
+        keywordListPath(workspaceId, tab, keyword, market, pageParam, cacheMode),
       ),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
@@ -307,6 +360,31 @@ export interface KeywordRefreshResult {
  * infinite query is reset to a single page, because page two of the previous
  * fetch describes a ranking that has just moved underneath it.
  */
+/**
+ * Fetches the pair live. Split from the hook so the two requests can be
+ * asserted directly — one press has to mean two calls, each carrying
+ * `fresh=true` exactly once, and that is a claim worth testing rather than
+ * trusting.
+ *
+ * `Promise.all` rather than a sequence: they are independent, and failing the
+ * whole press on either error keeps "did this cost me one pass or two?"
+ * answerable. A half-failed refresh has still rewritten what it fetched into
+ * the Worker's cache, so the retry reads it back for nothing.
+ */
+export async function refreshKeywordSearch(
+  workspaceId: string | null,
+  keyword: string,
+  market: MarketSelection,
+  tab: KeywordTabId,
+): Promise<KeywordRefreshResult> {
+  const paths = keywordRefreshPaths(workspaceId, keyword, market, tab);
+  const [overview, list] = await Promise.all([
+    api.get<KeywordOverviewResponse>(paths.overview),
+    api.get<KeywordListResponse>(paths.list),
+  ]);
+  return { overview, list, costUsd: overview.costUsd + list.costUsd };
+}
+
 export function useRefreshKeywordSearch(
   workspaceId: string | null,
   keyword: string,
@@ -315,23 +393,7 @@ export function useRefreshKeywordSearch(
 ) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (): Promise<KeywordRefreshResult> => {
-      const shared = marketParams(workspaceId ?? "", keyword, market);
-      const [overview, list] = await Promise.all([
-        api.get<KeywordOverviewResponse>(
-          `/keywords/overview?${queryString({ ...shared, fresh: true })}`,
-        ),
-        api.get<KeywordListResponse>(
-          `/keywords/${tab}?${queryString({
-            ...shared,
-            limit: PAGE_SIZE,
-            offset: 0,
-            fresh: true,
-          })}`,
-        ),
-      ]);
-      return { overview, list, costUsd: overview.costUsd + list.costUsd };
-    },
+    mutationFn: () => refreshKeywordSearch(workspaceId, keyword, market, tab),
     onSuccess: ({ overview, list }) => {
       queryClient.setQueryData(
         keywordKeys.overview(workspaceId ?? "", keyword, market),

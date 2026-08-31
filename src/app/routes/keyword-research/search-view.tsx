@@ -251,7 +251,14 @@ export function KeywordSearchView() {
     id: tab,
     label: TAB_LABELS[tab],
     content: (
+      /*
+       * Keyed on the research tab, so switching searches remounts the panel.
+       * Its filters and row selection describe *this* result set; carrying them
+       * into another keyword's results would show a bulk bar counting rows that
+       * are no longer on screen.
+       */
       <KeywordTabPanel
+        key={active?.id ?? resultKeyword}
         workspaceId={activeWorkspaceId}
         tab={tab}
         keyword={resultKeyword}
