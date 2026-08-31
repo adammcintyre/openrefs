@@ -20,6 +20,7 @@ export const JOB_TYPES = [
   "seed_daily",
   "rank_post",
   "rank_collect",
+  "audit_post",
   "audit_poll",
   "seed_ai_weekly",
   "ai_run",

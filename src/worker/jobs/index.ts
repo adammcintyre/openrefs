@@ -9,6 +9,7 @@
  */
 import { aiRun } from "./ai_run";
 import { auditPoll } from "./audit_poll";
+import { auditPost } from "./audit_post";
 import { rankCollect } from "./rank_collect";
 import { rankPost } from "./rank_post";
 import type { JobType } from "./queue";
@@ -26,12 +27,14 @@ export type { AiRunPayload } from "./ai_run";
 export type { RankPostPayload } from "./rank_post";
 export type { RankCollectPayload, RankCollectTask } from "./rank_collect";
 export type { AuditPollPayload } from "./audit_poll";
+export type { AuditPostPayload } from "./audit_post";
 export { AUDIT_FIRST_POLL_DELAY_MS } from "./audit_poll";
 
 export const JOB_HANDLERS: Record<JobType, JobHandler> = {
   seed_daily: seedDaily,
   rank_post: rankPost,
   rank_collect: rankCollect,
+  audit_post: auditPost,
   audit_poll: auditPoll,
   seed_ai_weekly: seedAiWeekly,
   ai_run: aiRun,

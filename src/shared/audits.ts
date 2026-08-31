@@ -240,6 +240,17 @@ export interface AuditListItem {
   renderJs: boolean;
   /** Present on a failed audit — the upstream reason, ready to display. */
   error: string | null;
+  /**
+   * The machine-readable half of `error`, when there is one — currently
+   * `spend_cap_exceeded` or `no_credentials`.
+   *
+   * A crawl is bought by a job now, after this audit's creation was already
+   * answered with a 202, so a refusal cannot arrive as an HTTP status the SPA
+   * switches on. It arrives here instead, and each code has its own CTA
+   * (raise the cap / add credentials) that matching on prose would get wrong.
+   * Optional and additive; absent means "no code", not "no error".
+   */
+  errorCode?: string | null;
 }
 
 /** GET /api/v1/projects/:id/audits?workspace=<id> */

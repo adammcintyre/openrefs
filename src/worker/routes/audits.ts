@@ -16,9 +16,9 @@
  * filters on `projects.workspace_id`, so an id belonging to another tenant
  * reads as "not found" rather than leaking that it exists.
  *
- * Only `POST` spends money, and it spends it inline (the crawl is bought at
- * request time so the cost hint in the response is a real posted task, not a
- * promise); everything else is D1 and R2 reads.
+ * Nothing here spends money any more. `POST` queues an `audit_post` job that
+ * buys the crawl on the sweeper's schedule, with its retry and backoff; every
+ * other route is D1 and R2 reads.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -52,8 +52,7 @@ import {
 } from "../dataforseo/on-page";
 import { ApiException } from "../http";
 import { enqueueJob } from "../jobs";
-import type { AuditPollPayload } from "../jobs/audit_poll";
-import { AUDIT_FIRST_POLL_DELAY_MS } from "../jobs/audit_poll";
+import type { AuditPostPayload } from "../jobs/audit_post";
 import { authorizeWorkspace, workspaceParam } from "../lib/research";
 import { readJson, readParams, readQuery } from "../lib/validate";
 import { requireSession } from "../middleware/auth";
@@ -103,15 +102,23 @@ projectAuditsRouter.get("/", async (c) => {
 /**
  * POST /api/v1/projects/:id/audits
  *
- * Buys a crawl. The task is posted **inline** rather than from a job, for one
- * reason: the caller needs to know it worked. A crawl that fails to post
- * (no credentials, over the spend cap, a domain their crawler refuses) must
- * surface as a 409/402/502 on this request, not as a job that fails silently
- * five minutes later leaving a `pending` audit nobody will explain.
+ * Queues a crawl. The row is written `pending` with no task id and an
+ * `audit_post` job buys the crawl behind the queue's retry and backoff; the
+ * response is still a 202 carrying the same cost estimate.
  *
- * The row is written **after** the post succeeds and carries the task id from
- * the start, so there is no window in which we have paid for a crawl with no
- * handle to collect it — the same rule `rank_post` follows.
+ * This used to post inline, on the argument that the caller needs to know it
+ * worked. What that traded away was resilience: a DataForSEO tarpit — minutes
+ * of hung connections from a shared Cloudflare egress IP, observed in
+ * production — turned this click into a 504 with nothing queued and nothing to
+ * retry, and the click is the one moment we cannot ask a user to repeat.
+ *
+ * What that argument was right about is preserved by two things rather than by
+ * blocking the request: the audit row exists immediately (so there is always
+ * something to show and something the duplicate guard can see), and every way
+ * the post can fail lands on that row as a status and an `errorCode` the SPA
+ * switches on — see `audit_post`. The failures that are *decisions* rather
+ * than accidents still surface here and now: no credentials and an already-
+ * running crawl are both answered 409 before anything is queued.
  */
 projectAuditsRouter.post("/", async (c) => {
   const { workspace } = readQuery(c, workspaceQuerySchema);
@@ -124,7 +131,10 @@ projectAuditsRouter.post("/", async (c) => {
   );
   const input = await readJson(c, createAuditSchema);
 
-  const project = await requireProject(db, workspace, projectId);
+  // Scoping, not data: a project id from another tenant must 404 here rather
+  // than queue a job naming it. The domain is read later, by `audit_post`,
+  // from the row it will actually crawl.
+  await requireProject(db, workspace, projectId);
 
   /*
    * One crawl at a time per project. Not a rate limit — a duplicate guard: a
@@ -140,12 +150,15 @@ projectAuditsRouter.post("/", async (c) => {
     );
   }
 
-  const dfs = await createDataForSeoApi(c.env, db, workspace);
-  const posted = await dfs.onPage.taskPost({
-    target: project.domain,
-    maxCrawlPages: input.maxCrawlPages,
-    enableJavascript: input.renderJs,
-  });
+  /*
+   * Resolved here even though nothing is spent yet, purely so a workspace with
+   * no DataForSEO credentials is told so by this request — a 409 with a CTA —
+   * rather than by an audit that queues, fails a minute later and has to be
+   * explained after the fact. It is the one pre-flight check worth the round
+   * trip: it reads D1, cannot hang on DataForSEO, and answers a question the
+   * user can act on immediately.
+   */
+  await createDataForSeoApi(c.env, db, workspace);
 
   const record = newAuditRecord({
     pagesLimit: input.maxCrawlPages,
@@ -156,39 +169,37 @@ projectAuditsRouter.post("/", async (c) => {
     .insert(audits)
     .values({
       projectId,
-      dfsTaskId: posted.taskId,
-      status: "running",
+      // No task id yet, and `pending` until `audit_post` buys the crawl. The
+      // duplicate guard counts this state as in-progress precisely so a second
+      // click in the gap cannot queue a second crawl.
+      dfsTaskId: null,
+      status: "pending",
       summaryJson: writeAuditRecord(record),
     })
     .returning(auditColumns);
 
   if (created === undefined) {
-    // The crawl is bought and running upstream; failing to record it is the
-    // one outcome worth shouting about, because the money is already spent.
     throw new ApiException(
       "internal_error",
-      "The crawl was started but the audit could not be recorded.",
+      "The audit could not be recorded, so no crawl was queued.",
     );
   }
 
-  const payload: AuditPollPayload = {
-    projectId,
-    auditId: created.id,
-    postedAt: Date.now(),
-    polls: 0,
-    lighthousePosted: false,
-    sectionsIngested: [],
-  };
+  const payload: AuditPostPayload = { projectId, auditId: created.id };
   await enqueueJob(db, {
-    type: "audit_poll",
+    type: "audit_post",
     workspaceId: workspace,
     payload: { ...payload },
-    runAt: new Date(Date.now() + AUDIT_FIRST_POLL_DELAY_MS),
+    // Now: the next sweep should buy it. The delay before a crawl starts is
+    // the sweep interval, not a deliberate wait.
+    runAt: new Date(),
   });
 
   const body: AuditCreatedResponse = {
     audit: toListItem(created),
-    taskId: posted.taskId,
+    // Null until `audit_post` has bought the crawl. The field has always been
+    // nullable; it is now null for the first minute of every audit's life.
+    taskId: null,
     estimatedCostUsd: estimateCrawlCostUsd(input.maxCrawlPages, input.renderJs),
     costPerPageUsd: perPageCostUsd(input.renderJs),
     pagesLimit: input.maxCrawlPages,
@@ -350,11 +361,18 @@ function toListItem(row: AuditRow): AuditListItem {
     pagesLimit: record.pagesLimit,
     renderJs: record.renderJs,
     error: record.error,
+    errorCode: record.errorCode,
   };
 }
 
 /**
  * Whether a crawl for this project is still going.
+ *
+ * `pending` counts, and since crawls became queue-posted that is what makes
+ * the duplicate guard work at all: for the first minute of its life an audit
+ * is `pending` with no task id, and a second "Run audit" click in that window
+ * must be refused exactly as one during the crawl is. The status list below is
+ * the guard.
  *
  * Asks the `audits` table, not the `jobs` table, and the difference is not
  * cosmetic. A finished audit can still have a live `audit_poll` job attached

@@ -37,6 +37,18 @@ export interface AuditRecord {
    */
   error: string | null;
   /**
+   * The machine-readable half of `error`, when the failure has one of our
+   * canonical codes.
+   *
+   * Exists because a queue-posted crawl fails *after* the user's click has
+   * been answered with a 202, so the error surfaces in the audit row rather
+   * than as an HTTP status the SPA can switch on. `spend_cap_exceeded` and
+   * `no_credentials` each have a specific CTA — raise the cap, add credentials
+   * — and matching on prose would be the wrong way to choose between them.
+   * Null when the failure has no code worth branching on.
+   */
+  errorCode: string | null;
+  /**
    * The separate Lighthouse task posted for the homepage.
    *
    * Its lifecycle is independent of the crawl's — a different endpoint, a
@@ -66,6 +78,7 @@ export function newAuditRecord(options: {
     summary: null,
     progress: null,
     error: null,
+    errorCode: null,
     lighthouseTaskId: null,
     pagesLimit: options.pagesLimit,
     renderJs: options.renderJs,
@@ -90,6 +103,7 @@ export function readAuditRecord(raw: unknown): AuditRecord {
   const summary = source["summary"];
   const progress = source["progress"];
   const error = source["error"];
+  const errorCode = source["errorCode"];
   const lighthouseTaskId = source["lighthouseTaskId"];
   const pagesLimit = source["pagesLimit"];
   const renderJs = source["renderJs"];
@@ -100,6 +114,7 @@ export function readAuditRecord(raw: unknown): AuditRecord {
       ? (progress as unknown as AuditProgress)
       : null,
     error: typeof error === "string" ? error : null,
+    errorCode: typeof errorCode === "string" ? errorCode : null,
     lighthouseTaskId:
       typeof lighthouseTaskId === "string" ? lighthouseTaskId : null,
     pagesLimit:
