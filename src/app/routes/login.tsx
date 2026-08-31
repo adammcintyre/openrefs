@@ -67,6 +67,11 @@ export function Login() {
           type="password"
           autoComplete="current-password"
         />
+        <p className="text-right text-sm">
+          <Link to="/forgot" className="text-primary hover:underline">
+            Forgot password?
+          </Link>
+        </p>
 
         {message !== null && (
           <p
