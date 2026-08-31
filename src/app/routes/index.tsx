@@ -14,6 +14,7 @@ import { InviteAccept } from "./invite";
 import { KeywordResearchModule } from "./keyword-research/module";
 import { RankTrackingModule } from "./rank-tracking/module";
 import { Landing } from "./landing";
+import { DevelopersPage } from "./developers";
 import { Login } from "./login";
 import { Privacy } from "./privacy";
 import { SiteAuditModule } from "./site-audit/module";
@@ -88,6 +89,7 @@ export function AppRoutes() {
       <Route path="/register" element={<Register />} />
       <Route path="/invite/:token" element={<InviteAccept />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/developers" element={<DevelopersPage />} />
 
       <Route element={<RequireSession />}>
         <Route
