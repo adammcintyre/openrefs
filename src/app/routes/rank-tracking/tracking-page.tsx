@@ -46,6 +46,7 @@ import {
   useRemoveTrackedKeywords,
   useTrackedKeywords,
 } from "../../components/tracking/queries";
+import { SerpPanel } from "../../components/serp-panel";
 import { TrackingTable } from "../../components/tracking/tracking-table";
 import { useProjects } from "../../components/projects/queries";
 import {
@@ -169,6 +170,7 @@ function ProjectTracking({
   const [pendingRemoval, setPendingRemoval] = useState<TrackedKeywordRow[] | null>(
     null,
   );
+  const [serpTarget, setSerpTarget] = useState<TrackedKeywordRow | null>(null);
 
   const rows = useMemo(() => query.data?.keywords ?? [], [query.data]);
   const checkInProgress = query.data?.checkInProgress ?? false;
@@ -355,6 +357,7 @@ function ProjectTracking({
             onToggle={onToggle}
             onToggleAll={onToggleAll}
             onRemove={setPendingRemoval}
+            onViewSerp={setSerpTarget}
             emptyState={
               <EmptyState
                 icon={ListPlus}
@@ -392,6 +395,24 @@ function ProjectTracking({
         description="Their position history is deleted too, and re-adding them starts from scratch."
         confirmLabel="Stop tracking"
       />
+
+      {/*
+        Mounted only with a concrete row: each tracked keyword carries its own
+        market, so the panel opens on the exact country and language the
+        position was measured in. The shared panel shows the desktop SERP —
+        it reads the workspace's cached copy first, exactly as in Keyword
+        Research, so opening it is normally $0.
+      */}
+      {serpTarget === null || workspaceId === null ? null : (
+        <SerpPanel
+          workspaceId={workspaceId}
+          keyword={serpTarget.keyword}
+          locationCode={serpTarget.locationCode}
+          languageCode={serpTarget.languageCode}
+          open
+          onClose={() => setSerpTarget(null)}
+        />
+      )}
     </div>
   );
 }

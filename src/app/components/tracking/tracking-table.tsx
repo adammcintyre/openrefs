@@ -21,7 +21,7 @@
  * for `undefined` only — so every nullable accessor maps null to undefined,
  * while the cell reads `row.original` to tell the cases apart.
  */
-import { Sparkles, Trash2 } from "lucide-react";
+import { ExternalLink, Sparkles, Trash2 } from "lucide-react";
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 
@@ -50,6 +50,7 @@ interface TrackingTableContext {
   onToggle: (id: string) => void;
   onToggleAll: (checked: boolean) => void;
   onRemove: (rows: TrackedKeywordRow[]) => void;
+  onViewSerp: (row: TrackedKeywordRow) => void;
 }
 
 const RowContext = createContext<TrackingTableContext | null>(null);
@@ -242,6 +243,22 @@ function AiOverviewCell({ row }: { row: TrackedKeywordRow }) {
   );
 }
 
+function SerpCell({ row }: { row: TrackedKeywordRow }) {
+  const { onViewSerp } = useRowContext();
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => onViewSerp(row)}
+      aria-label={`View SERP for ${row.keyword}`}
+      title={`View the desktop SERP for ${row.keyword} in this keyword's market`}
+    >
+      <ExternalLink className="size-3.5" aria-hidden="true" />
+      SERP
+    </Button>
+  );
+}
+
 function RemoveCell({ row }: { row: TrackedKeywordRow }) {
   const { onRemove } = useRowContext();
   return (
@@ -328,6 +345,11 @@ const columns: Array<DataTableColumn<TrackedKeywordRow>> = [
     cell: (info) => <SparklineCell row={info.row.original} />,
   }),
   col.display({
+    id: "serp",
+    header: () => <span className="sr-only">View SERP</span>,
+    cell: (info) => <SerpCell row={info.row.original} />,
+  }),
+  col.display({
     id: "remove",
     header: () => <span className="sr-only">Remove</span>,
     cell: (info) => <RemoveCell row={info.row.original} />,
@@ -344,6 +366,7 @@ export function TrackingTable({
   onToggle,
   onToggleAll,
   onRemove,
+  onViewSerp,
   emptyState,
 }: {
   rows: ReadonlyArray<TrackedKeywordRow>;
@@ -353,11 +376,12 @@ export function TrackingTable({
   onToggle: (id: string) => void;
   onToggleAll: (checked: boolean) => void;
   onRemove: (rows: TrackedKeywordRow[]) => void;
+  onViewSerp: (row: TrackedKeywordRow) => void;
   emptyState?: ReactNode;
 }) {
   return (
     <RowContext.Provider
-      value={{ rows, selected, onToggle, onToggleAll, onRemove }}
+      value={{ rows, selected, onToggle, onToggleAll, onRemove, onViewSerp }}
     >
       <DataTable
         columns={columns}
