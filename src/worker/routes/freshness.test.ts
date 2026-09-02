@@ -90,6 +90,34 @@ async function get(path: string): Promise<Response> {
 }
 
 /**
+ * The same, for the one research route that takes its input as a body.
+ *
+ * `POST /backlinks/scores` carries `workspace`, `fresh` and `stale` as body
+ * fields rather than query parameters, which is exactly the kind of difference
+ * a per-route rule gets forgotten in — hence its own helper and its own rows in
+ * every table below.
+ */
+async function post(path: string, body: unknown): Promise<Response> {
+  return await app.request(
+    `${API_PREFIX}${path}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+    { APP_ENV: "development", DB: {} as D1Database } as Env,
+  );
+}
+
+/** Enough of a scores body to reach the freshness check. */
+function scoresBody(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { workspace: WS, targets: ["example.com"], ...extra };
+}
+
+/**
  * Every research GET that takes the pair, with enough of a query to reach the
  * freshness check. Adding a `stale` parameter to a route means adding it here.
  */
@@ -118,6 +146,17 @@ beforeEach(() => {
 describe("fresh + stale together", () => {
   it.each(RESEARCH_GETS)("is a 422 on %s", async (path) => {
     const res = await get(`${path}&workspace=${WS}&fresh=true&stale=true`);
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("validation_failed");
+  });
+
+  it("is a 422 on POST /backlinks/scores", async () => {
+    const res = await post(
+      "/backlinks/scores",
+      scoresBody({ fresh: true, stale: true }),
+    );
 
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error?: { code?: string } };
@@ -190,6 +229,26 @@ describe("stale reaches the provider client as allowStale", () => {
       // And the opposite instruction is not smuggled along with it.
       expect(req.fresh).not.toBe(true);
     }
+  });
+
+  /**
+   * The body-field route, which the Domain Overview gauge depends on: opening a
+   * domain from the search trail asks for its Domain Score with `stale: true`,
+   * and if that never became `allowStale` the one free click on the page would
+   * bill for the one card that had not been threaded.
+   */
+  it("POST /backlinks/scores", async () => {
+    await post("/backlinks/scores", scoresBody({ stale: true }));
+
+    expect(requests.length, "no provider request was made").toBeGreaterThan(0);
+    expect(requests[0]?.allowStale).toBe(true);
+    expect(requests[0]?.fresh).not.toBe(true);
+  });
+
+  it("POST /backlinks/scores passes fresh through as fresh", async () => {
+    await post("/backlinks/scores", scoresBody({ fresh: true }));
+    expect(requests[0]?.fresh).toBe(true);
+    expect(requests[0]?.allowStale).not.toBe(true);
   });
 
   it("passes fresh through as fresh, not as permission to serve stale", async () => {

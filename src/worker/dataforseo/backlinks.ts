@@ -547,6 +547,14 @@ export interface BacklinksHistoryResult extends WrappedMeta {
 const bulkRanksParamsSchema = z.object({
   targets: z.array(z.string().trim().min(1)).min(1).max(BULK_RANKS_MAX_TARGETS),
   fresh: z.boolean().optional(),
+  /**
+   * Serve a soft-expired copy rather than buying a new one.
+   *
+   * The Domain Overview gauge is opened from the search trail like everything
+   * else on that screen, and a history click must cost $0 — the score cannot be
+   * the one card on the strip that quietly bills.
+   */
+  allowStale: z.boolean().optional(),
 });
 
 export type BulkRanksParams = z.input<typeof bulkRanksParamsSchema>;
@@ -802,7 +810,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
     },
 
     async bulkRanksLive(params) {
-      const { targets, fresh } = parseParams(
+      const { targets, fresh, allowStale } = parseParams(
         bulkRanksParamsSchema,
         params,
         `Invalid bulk ranks request (max ${BULK_RANKS_MAX_TARGETS} targets).`,
@@ -818,6 +826,7 @@ export function createBacklinksApi(client: DataForSeoClient): BacklinksApi {
         ],
         ttl: "short",
         fresh,
+        allowStale,
       });
 
       const raw = response.results[0] ?? null;

@@ -3738,7 +3738,11 @@ const PATHS: Record<string, PathItem> = {
         "**The provider does not preserve input order** (it returns URL targets before " +
         "bare domains), so results must be matched back by the `target` string in each " +
         "row. Matching by index will silently attribute the wrong score to the wrong " +
-        "target.",
+        "target.\n\n" +
+        "**`fresh` and `stale` are body fields here**, for the same reason `workspace` " +
+        "is, and they mean what they mean on every research GET: `fresh` bypasses the " +
+        "cache and bills, `stale` accepts a copy past its normal lifetime and spends " +
+        "nothing. Sending both is a 422.",
       tags: ["Backlinks"],
       requestBody: jsonBody(
         obj(
@@ -3752,8 +3756,12 @@ const PATHS: Record<string, PathItem> = {
               description: `Domains, subdomains or absolute URLs. At most ${BACKLINKS_SCORES_MAX_TARGETS} per call — our ceiling, not the provider's, chosen to keep one request's cost predictable.`,
             },
             fresh: bool("Bypass the cache and buy a new answer."),
+            stale: bool(
+              "Accept a stored copy past its normal lifetime rather than spending. " +
+                "The response carries `stale: true` when one was served.",
+            ),
           },
-          { optional: ["fresh"] },
+          { optional: ["fresh", "stale"] },
         ),
       ),
       responses: {

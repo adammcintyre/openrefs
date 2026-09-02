@@ -46,11 +46,14 @@ import {
   fromScore,
 } from "../dataforseo";
 import type { LabsFilter, LabsSort } from "../dataforseo/filters";
+import { fetchedAtIso } from "../dataforseo/schema";
 import { ApiException } from "../http";
 import {
   authorizeWorkspace,
   booleanParam,
   pagingQuerySchema,
+  toFreshness,
+  withFreshness,
   workspaceParam,
 } from "../lib/research";
 import { readJson, readQuery } from "../lib/validate";
@@ -133,6 +136,12 @@ const historyQuerySchema = targetQuerySchema.extend({
   to: isoDate.optional(),
 });
 
+/**
+ * The one POST in this module, so the one place `fresh` / `stale` are body
+ * fields rather than query parameters. They mean exactly what they mean
+ * everywhere else (see `freshnessShape` in lib/research), and `withFreshness`
+ * still refuses the contradictory pair.
+ */
 const scoresBodySchema = z.object({
   workspace: workspaceParam,
   targets: z
@@ -143,6 +152,7 @@ const scoresBodySchema = z.object({
       `At most ${BACKLINKS_SCORES_MAX_TARGETS} targets per request.`,
     ),
   fresh: z.boolean().optional(),
+  stale: z.boolean().optional(),
 });
 
 /**
@@ -447,16 +457,19 @@ backlinks.get("/history", async (c) => {
  * POST rather than GET because a page of SERP domains does not fit in a query
  * string, and because the batch is the point: one call scores up to
  * `BACKLINKS_SCORES_MAX_TARGETS` domains for the SERP panel's Domain Score
- * column.
+ * column and the Domain Overview gauge's single one.
  */
 backlinks.post("/scores", async (c) => {
-  const body = await readJson(c, scoresBodySchema);
+  const body = await readJson(c, withFreshness(scoresBodySchema));
   const db = await authorizeWorkspace(c.env, c.get("session"), body.workspace);
   const dfs = await createDataForSeoApi(c.env, db, body.workspace);
 
+  // `toFreshness`, not `body.fresh` — the query field is `stale` and the client
+  // option is `allowStale`, and both are optional, so a hand-rolled hand-off
+  // type-checks while silently billing. See lib/research.
   const result = await dfs.backlinks.bulkRanksLive({
     targets: body.targets,
-    fresh: body.fresh,
+    ...toFreshness(body),
   });
 
   const response: BacklinksScoresResponse = {
@@ -468,6 +481,8 @@ backlinks.post("/scores", async (c) => {
     itemsCount: result.itemsCount,
     costUsd: result.costUsd,
     cached: result.cached,
+    stale: result.stale ?? false,
+    fetchedAt: fetchedAtIso(result),
   };
   return c.json(response);
 });
