@@ -1,15 +1,26 @@
 /**
- * The headline strip: four numbers and the shape of the last two years.
+ * The headline strip: a Domain Score dial, four numbers, and the shape of the
+ * last two years.
  *
  * The deltas come from the history series rather than from a second overview
  * call — one purchase, two uses. They are month-over-month and captioned as
  * such, so nobody reads them as "since you last looked".
+ *
+ * The gauge leads because it is the question people open this screen with, and
+ * it is a *second* purchase: the Labs overview does not carry authority, so the
+ * dial is a `POST /backlinks/scores` of its own and wears its own cost chip
+ * rather than hiding inside the overview's price.
  */
 import { useMemo } from "react";
+import { Link } from "react-router";
 
 import type { DomainHistoryPoint, RankMetrics } from "../../../shared/domains";
-import { TrendLineChart } from "../../components/charts";
+import { ScoreGauge, TrendLineChart } from "../../components/charts";
 import { ApiErrorNotice } from "../../components/domains/api-error-notice";
+import {
+  lookupDomainScore,
+  scoresByTarget,
+} from "../../components/gap/domain-scores";
 import {
   formatCount,
   formatMoney,
@@ -32,8 +43,14 @@ import {
   Skeleton,
 } from "../../components/ui";
 import type { MetricDelta } from "../../components/ui";
+import { errorMessage } from "../../lib/api";
 import type { CacheMode, RefreshTarget } from "./queries";
-import { useDomainHistory, useDomainOverview, useRefreshDomain } from "./queries";
+import {
+  useDomainHistory,
+  useDomainOverview,
+  useDomainScore,
+  useRefreshDomain,
+} from "./queries";
 import type { DomainSearch } from "./url-state";
 
 /** A percentage delta for a MetricCard, or nothing when it cannot be trusted. */
@@ -75,7 +92,18 @@ export function DomainMetrics({
 }) {
   const overview = useDomainOverview(workspaceId, search, true, cacheMode);
   const history = useDomainHistory(workspaceId, search, true, cacheMode);
+  const score = useDomainScore(workspaceId, search, true, cacheMode);
   const refresh = useRefreshDomain(workspaceId, search);
+
+  /*
+   * Matched back by target string, never by index: the endpoint is a batch one
+   * and does not preserve input order, and `www.`/scheme come and go on the way
+   * back. One row here, but the rule is the rule.
+   */
+  const domainScore = useMemo(
+    () => lookupDomainScore(scoresByTarget(score.data?.items ?? []), search.target),
+    [score.data, search.target],
+  );
 
   const items = history.data?.items ?? [];
   const previousPoint = items.at(-2);
@@ -132,7 +160,41 @@ export function DomainMetrics({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/*
+        Five cards now, so the wide breakpoint carries five columns and the
+        middle one carries three — the alternative, leaving the old four-column
+        rule in place, orphans the fifth card on a row of its own.
+      */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <Card className="p-5">
+          <ScoreGauge
+            score={domainScore}
+            target={search.target}
+            loading={score.isPending}
+            /*
+             * A failed lookup renders as an unscored dial with the reason,
+             * never as a notice that would break the grid this card sits in.
+             * The rest of the strip is unaffected — the score is its own call.
+             */
+            unavailableNote={
+              score.error === null
+                ? undefined
+                : errorMessage(score.error, "Could not load the Domain Score.")
+            }
+            badge={<ResultMetaChip meta={score.data} />}
+            footer={
+              <Link
+                to={`/app/backlinks?target=${encodeURIComponent(search.target)}`}
+                className="mt-auto self-center pt-3 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                title={`Open ${search.target}'s link profile in Backlinks.`}
+              >
+                View backlinks →
+              </Link>
+            }
+            className="h-full"
+          />
+        </Card>
+
         <MetricCard
           label="Organic traffic (est.)"
           value={formatTraffic(organic?.traffic)}

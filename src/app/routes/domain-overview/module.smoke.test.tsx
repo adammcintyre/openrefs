@@ -22,6 +22,7 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
 
+import type { BacklinksScoresResponse } from "../../../shared/backlinks";
 import type {
   CompetitorRow,
   DomainKeywordsResponse,
@@ -105,6 +106,19 @@ const OVERVIEW: DomainOverviewResponse = {
   costUsd: 0.012_12,
   cached: false,
   fetchedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+};
+
+/**
+ * The gauge's own purchase. A batch endpoint answering about one target, with
+ * the `www.` the provider likes to add back — the row has to be matched by
+ * target string rather than by position, and normalising both sides is what
+ * makes that work.
+ */
+const SCORES: BacklinksScoresResponse = {
+  items: [{ target: `www.${TARGET}`, domainScore: 62 }],
+  itemsCount: 1,
+  costUsd: 0.02,
+  cached: false,
 };
 
 /**
@@ -202,6 +216,8 @@ function seededClient(): QueryClient {
     ["domains", "overview", WORKSPACE_ID, TARGET, 2826, "en"],
     OVERVIEW,
   );
+  // Market-free key: a link profile is not a per-market fact.
+  client.setQueryData(["domains", "score", WORKSPACE_ID, TARGET], SCORES);
   client.setQueryData(
     ["domains", "keywords", WORKSPACE_ID, TARGET, 2826, "en", false, {}],
     { pages: [KEYWORDS], pageParams: [0] },
@@ -275,6 +291,39 @@ describe("the module mounts", () => {
     expect(html).toContain("$1,186/mo value");
     // Live cost, shown as spent.
     expect(html).toContain("$0.01 live");
+  });
+});
+
+describe("the Domain Score gauge", () => {
+  const html = render(
+    `/app/domain-overview?target=${TARGET}&location=2826&language=en`,
+  );
+
+  it("leads the metrics strip", () => {
+    expect(html).toContain("Domain Score");
+    expect(html.indexOf("Domain Score")).toBeLessThan(
+      html.indexOf("Organic traffic (est.)"),
+    );
+  });
+
+  /** Matched by target string: the provider echoed `www.` back at us. */
+  it("shows the score for this domain, as a meter", () => {
+    expect(html).toContain('role="meter"');
+    expect(html).toContain('aria-valuenow="62"');
+    expect(html).toContain(`aria-label="Domain Score for ${TARGET}: 62 out of 100`);
+  });
+
+  it("says what the number is and what it cost", () => {
+    expect(html).toContain(
+      "0 to 100, from the backlinks index. The same scale used across OpenRefs.",
+    );
+    // Its own chip: the score is a second purchase, not part of the overview's.
+    expect(html).toContain("$0.02 live");
+  });
+
+  it("offers the way through to the link profile", () => {
+    expect(html).toContain("View backlinks");
+    expect(html).toContain(`href="/app/backlinks?target=${TARGET}"`);
   });
 });
 
