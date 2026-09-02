@@ -86,10 +86,12 @@ export function AppLayout({
         Skip to content
       </a>
 
-      {/* Desktop rail. */}
+      {/* Desktop rail. Sticky at viewport height so the nav and the spend
+          widget stay in view on tall pages — the nav scrolls inside itself
+          (AppSidebar's own overflow), never with the document. */}
       <aside
         className={cn(
-          "hidden shrink-0 border-r border-border transition-[width] duration-150 lg:flex lg:flex-col",
+          "sticky top-0 hidden h-dvh shrink-0 border-r border-border transition-[width] duration-150 lg:flex lg:flex-col",
           collapsed ? "w-16" : "w-60",
         )}
       >
