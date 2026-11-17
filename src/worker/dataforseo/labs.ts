@@ -102,7 +102,7 @@ export const RELATED_KEYWORDS_MAX_DEPTH = 4;
  * Worth batching *to* rather than merely under: the endpoint bills $0.012 per
  * task plus $0.00012 per returned item, so the flat fee dominates every small
  * call. 1000 targets cost $0.132; ten calls of 100 cost $0.24 for the same
- * data.
+ * data — 1.8×, all of it request fees.
  */
 export const BULK_TRAFFIC_ESTIMATION_MAX_TARGETS = 1000;
 
